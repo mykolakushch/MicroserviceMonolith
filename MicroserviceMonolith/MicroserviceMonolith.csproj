@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFramework>net6.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+		<AssemblyName>Framework.Core</AssemblyName>
+		<RootNamespace>Framework.Core</RootNamespace>
+		<PackageId>MicroserviceMonolyth</PackageId>
+		<Version>1.0.0</Version>
+		<Authors>Mykola Kusch</Authors>
+		<Company>mnml</Company>
+		<Description>
+			MicroserviceMonolyth is a modular monolith framework that combines the simplicity of a traditional
+			monolith with the benefits of microservices. It offers extremely loosely coupled modules, featuring built-in event and command buses,
+			comprehensive module management, and an asynchronous execution queue with middleware support for logging, error handling, and retries.
+			This framework enables scalable, maintainable, and decoupled application development.
+		</Description>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<RepositoryUrl>https://github.com/your-repo</RepositoryUrl>
+	</PropertyGroup>
+</Project>
