@@ -1,6 +1,6 @@
-# MicroserviceMonolyth
+# MicroserviceMonolith
 
-**MicroserviceMonolyth** is a modular monolith framework that combines the simplicity of a traditional monolith with the benefits of microservices. It provides loosely coupled modules with built-in event and command buses, module management, and an execution queue.
+**MicroserviceMonolith** is a modular monolith framework that combines the simplicity of a traditional monolith with the benefits of microservices. It provides loosely coupled modules with built-in event and command buses, module management, and an execution queue.
 
 ## Table of Contents
 
@@ -22,12 +22,12 @@
 
 ```sh
 # Using .NET CLI
-dotnet add package MicroserviceMonolyth --version 1.0.0
+dotnet add package MicroserviceMonolith --version 1.0.0
 ```
 
 ```sh
 # Using Package Manager Console
-Install-Package MicroserviceMonolyth -Version 1.0.0
+Install-Package MicroserviceMonolith -Version 1.0.0
 ```
 
 ## Example Application
@@ -56,8 +56,8 @@ namespace ExampleApp.Events
 ```csharp
 using System;
 using System.Threading.Tasks;
-using MicroserviceMonolyth.Events;
-using MicroserviceMonolyth.Modules;
+using MicroserviceMonolith.Events;
+using MicroserviceMonolith.Modules;
 
 /// <summary>
 /// This module listens for weather update requests and publishes weather change events.
@@ -121,8 +121,8 @@ public class WeatherModule : ModuleBase
 ```csharp
 using System;
 using System.Threading.Tasks;
-using MicroserviceMonolyth.Events;
-using MicroserviceMonolyth.Logging;
+using MicroserviceMonolith.Events;
+using MicroserviceMonolith.Logging;
 
 class Program
 {
