@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\MicroserviceMonolyth\MicroserviceMonolith.csproj" />
+    <ProjectReference Include="..\MicroserviceMonolith\MicroserviceMonolith.csproj" />
   </ItemGroup>
 
 </Project>
