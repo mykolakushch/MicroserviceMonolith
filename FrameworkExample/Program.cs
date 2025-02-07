@@ -96,11 +96,7 @@ namespace ExampleApp
             for (int i = 0; i < 10; i++)
             {
                 // Імітація дії користувача з параметрами
-                var actionContext = new UserActionContext
-                {
-                    Args = 500,
-                    Sender = "Button1"
-                };
+                var actionContext = new UserActionContext("Button1", 500);  
                 await userActionsModule.DispatchActionAsync("UpdateWeather", actionContext);
 
                 await Task.Delay(1000);
