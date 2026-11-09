@@ -1,0 +1,72 @@
+name: Release & Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build in Release mode
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Run unit & integration tests
+        run: dotnet test --configuration Release --no-build --verbosity normal
+
+      - name: Pack NuGet package
+        run: dotnet pack MicroserviceMonolith/MicroserviceMonolith.csproj --configuration Release --no-build --output ./artifacts
+
+      - name: Prepare binary archive
+        run: |
+          mkdir -p ./artifacts/binaries/net8.0 ./artifacts/binaries/net9.0
+          cp -r MicroserviceMonolith/bin/Release/net8.0/* ./artifacts/binaries/net8.0/
+          cp -r MicroserviceMonolith/bin/Release/net9.0/* ./artifacts/binaries/net9.0/
+          cd ./artifacts && zip -r MicroserviceMonolith-v1.0.0-binaries.zip binaries
+
+      - name: Publish to GitHub Packages
+        run: |
+          dotnet nuget push ./artifacts/*.nupkg \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --api-key "${{ secrets.GITHUB_TOKEN }}" \
+            --skip-duplicate || true
+
+      - name: Publish to NuGet.org
+        if: env.NUGET_API_KEY != ''
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          dotnet nuget push ./artifacts/*.nupkg \
+            --source "https://api.nuget.org/v3/index.json" \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --skip-duplicate
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            ./artifacts/*.nupkg
+            ./artifacts/*.snupkg
+            ./artifacts/MicroserviceMonolith-v1.0.0-binaries.zip

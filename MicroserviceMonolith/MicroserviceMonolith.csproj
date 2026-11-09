@@ -13,9 +13,18 @@
 		<Description>MicroserviceMonolith is a comprehensive, production-ready modular monolith framework for .NET. It features decoupled modules with lifecycle management, in-memory command and query buses (CQRS), event bus with flexible dispatch strategies, pipeline behaviors (logging, retry, error handling, performance tracking), background execution channels, transactional outbox pattern, and full Microsoft.Extensions.DependencyInjection integration.</Description>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 		<RepositoryUrl>https://github.com/mykolakushch/MicroserviceMonolith</RepositoryUrl>
+		<PackageProjectUrl>https://github.com/mykolakushch/MicroserviceMonolith</PackageProjectUrl>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageTags>modular-monolith;cqrs;event-bus;outbox;microservices;architecture;mediator;ddd</PackageTags>
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<NoWarn>$(NoWarn);1591</NoWarn>
 	</PropertyGroup>
+
+	<ItemGroup>
+		<None Include="..\README.md" Pack="true" PackagePath="\" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
