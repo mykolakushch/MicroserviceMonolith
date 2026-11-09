@@ -2,7 +2,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-8.0%20%7C%209.0-purple.svg)](https://dotnet.microsoft.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-41%20Passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-39%20Passed-brightgreen.svg)]()
 
 **MicroserviceMonolith** is a lightweight, production-grade .NET framework for architecting robust **Modular Monoliths**. It bridges the operational simplicity of a unified single-process application with the architectural benefits of microservices: extreme loose coupling, bounded contexts, CQRS, and event-driven communication.
 

@@ -12,7 +12,7 @@
 		<Company>mnml</Company>
 		<Description>MicroserviceMonolith is a comprehensive, production-ready modular monolith framework for .NET. It features decoupled modules with lifecycle management, in-memory command and query buses (CQRS), event bus with flexible dispatch strategies, pipeline behaviors (logging, retry, error handling, performance tracking), background execution channels, transactional outbox pattern, and full Microsoft.Extensions.DependencyInjection integration.</Description>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
-		<RepositoryUrl>https://github.com/nikolaykusch/MicroserviceMonolith</RepositoryUrl>
+		<RepositoryUrl>https://github.com/mykolakushch/MicroserviceMonolith</RepositoryUrl>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<NoWarn>$(NoWarn);1591</NoWarn>
 	</PropertyGroup>
