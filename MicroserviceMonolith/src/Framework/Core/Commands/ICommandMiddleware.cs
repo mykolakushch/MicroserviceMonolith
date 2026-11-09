@@ -1,20 +1,27 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace MicroserviceMonolith.Core.Commands
 {
     /// <summary>
-    /// Defines the contract for a command middleware that processes commands in the command pipeline.
+    /// Defines the contract for a command middleware that intercepts commands in the command processing pipeline.
     /// </summary>
-    /// <typeparam name="TCommand">The type of the command being processed. Must implement <see cref="ICommand"/>.</typeparam>
     public interface ICommandMiddleware
     {
         /// <summary>
-        /// Asynchronously processes the given command and invokes the next step in the command pipeline.
+        /// Asynchronously intercepts and processes the given command and invokes the next step in the pipeline.
         /// </summary>
-        /// <param name="command">The command instance to be processed by this middleware.</param>
-        /// <param name="next">A delegate representing the next step in the command pipeline to be invoked after this middleware completes its work.</param>
-        /// <returns>A task representing the asynchronous operation of this middleware.</returns>
-        Task InvokeAsync<TCommand>(TCommand command, Func<Task> next) where TCommand : ICommand;
+        /// <typeparam name="TCommand">The command type being processed.</typeparam>
+        /// <typeparam name="TResult">The expected result type.</typeparam>
+        /// <param name="command">The command instance.</param>
+        /// <param name="next">Delegate to invoke the next middleware or final handler.</param>
+        /// <param name="cancellationToken">Cancellation token for the operation.</param>
+        /// <returns>A task representing the result of the command execution.</returns>
+        Task<TResult> InvokeAsync<TCommand, TResult>(
+            TCommand command,
+            Func<Task<TResult>> next,
+            CancellationToken cancellationToken = default)
+            where TCommand : ICommand<TResult>;
     }
 }

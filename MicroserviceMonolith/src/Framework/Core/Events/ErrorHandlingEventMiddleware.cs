@@ -1,45 +1,48 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using MicroserviceMonolith.Core.Logging;
 
 namespace MicroserviceMonolith.Core.Events
 {
     /// <summary>
-    /// A middleware that handles error logging for event processing.
-    /// If an exception occurs during event handling, it logs the error and rethrows the exception.
+    /// Event middleware that logs errors occurring during event publishing.
     /// </summary>
     public class ErrorHandlingEventMiddleware : IEventMiddleware
     {
-        // Logger instance used for logging error details during event handling.
-        private readonly ILogger _logger;
+        private readonly Action<string, Exception> _logErrorAction;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="ErrorHandlingEventMiddleware"/> class.
-        /// </summary>
-        /// <param name="logger">The logger instance used for logging error details during event processing.</param>
-        public ErrorHandlingEventMiddleware(ILogger logger) => _logger = logger;
+        public ErrorHandlingEventMiddleware(ILogger logger)
+        {
+            if (logger == null) throw new ArgumentNullException(nameof(logger));
+            _logErrorAction = (msg, ex) => logger.Log($"[Event] {msg}: {ex.Message}");
+        }
 
-        /// <summary>
-        /// Asynchronously processes the event and logs any error that occurs during its handling.
-        /// </summary>
-        /// <typeparam name="TEvent">The type of the event being processed. It must be a class type.</typeparam>
-        /// <param name="event">The event instance that is being processed.</param>
-        /// <param name="next">A delegate representing the next step in the event pipeline.</param>
-        /// <returns>A task representing the asynchronous operation.</returns>
-        /// <exception cref="Exception">Throws the exception after logging it if an error occurs during event processing.</exception>
-        public async Task InvokeAsync<TEvent>(TEvent @event, Func<Task> next) where TEvent : class
+        public ErrorHandlingEventMiddleware(Microsoft.Extensions.Logging.ILogger<ErrorHandlingEventMiddleware> logger)
+        {
+            if (logger == null) throw new ArgumentNullException(nameof(logger));
+            _logErrorAction = (msg, ex) => Microsoft.Extensions.Logging.LoggerExtensions.LogError(logger, ex, "{Message}", msg);
+        }
+
+        public ErrorHandlingEventMiddleware(Action<string, Exception> logErrorAction)
+        {
+            _logErrorAction = logErrorAction ?? throw new ArgumentNullException(nameof(logErrorAction));
+        }
+
+        /// <inheritdoc />
+        public async Task InvokeAsync<TEvent>(
+            TEvent @event,
+            Func<Task> next,
+            CancellationToken cancellationToken = default)
+            where TEvent : class
         {
             try
             {
-                // Proceed to the next action in the event pipeline (e.g., another middleware or event handler).
                 await next();
             }
             catch (Exception ex)
             {
-                // Log the error with the event type and the exception message if an error occurs during event processing.
-                _logger.Log($"[Event] Error in {@event.GetType().Name}: {ex.Message}");
-
-                // Rethrow the exception to ensure proper error handling and prevent the pipeline from continuing.
+                _logErrorAction($"Error in {@event.GetType().Name}", ex);
                 throw;
             }
         }

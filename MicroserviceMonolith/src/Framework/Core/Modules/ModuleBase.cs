@@ -1,25 +1,40 @@
+using System;
+using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MicroserviceMonolith.Core.Modules
 {
     /// <summary>
-    /// An abstract base class that implements the <see cref="IModule"/> interface.
-    /// Provides default implementations for module initialization and shutdown methods.
+    /// Abstract base class for application modules providing default virtual no-op lifecycle implementations.
     /// </summary>
     public abstract class ModuleBase : IModule
     {
-        /// <summary>
-        /// Asynchronously initializes the module.
-        /// Provides a default no-op implementation. Derived classes can override this method to provide specific initialization logic.
-        /// </summary>
-        /// <returns>A task representing the asynchronous initialization process.</returns>
+        /// <inheritdoc />
+        public virtual string Name => GetType().Name;
+
+        /// <inheritdoc />
+        public virtual void ConfigureServices(IServiceCollection services, IConfiguration configuration)
+        {
+        }
+
+        /// <inheritdoc />
+        public virtual Task InitializeAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken = default)
+        {
+            return InitializeAsync();
+        }
+
+        /// <inheritdoc />
+        public virtual Task ShutdownAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken = default)
+        {
+            return ShutdownAsync();
+        }
+
+        /// <inheritdoc />
         public virtual Task InitializeAsync() => Task.CompletedTask;
 
-        /// <summary>
-        /// Asynchronously shuts down the module.
-        /// Provides a default no-op implementation. Derived classes can override this method to provide specific shutdown logic.
-        /// </summary>
-        /// <returns>A task representing the asynchronous shutdown process.</returns>
+        /// <inheritdoc />
         public virtual Task ShutdownAsync() => Task.CompletedTask;
     }
 }

@@ -1,64 +1,77 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using MicroserviceMonolith.Core.Logging;
 
 namespace MicroserviceMonolith.Core.Commands
 {
     /// <summary>
-    /// A middleware that retries the execution of a command if an exception occurs.
+    /// Middleware that retries command execution with optional exponential backoff and jitter upon failure.
     /// </summary>
     public class RetryCommandMiddleware : ICommandMiddleware
     {
-        // The maximum number of retry attempts allowed for a failed command execution.
         private readonly int _maxRetries;
+        private readonly TimeSpan _initialDelay;
+        private readonly double _backoffMultiplier;
+        private readonly bool _useJitter;
+        private readonly Func<Exception, bool>? _shouldRetry;
+        private readonly Action<string> _logAction;
+        private readonly Random _random = new();
 
-        // Logger instance used for logging retry attempts and failures.
-        private readonly ILogger _logger;
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="RetryCommandMiddleware"/> class.
-        /// </summary>
-        /// <param name="maxRetries">The maximum number of retries allowed for the command execution.</param>
-        /// <param name="logger">The logger instance used for logging retry attempts and failure messages.</param>
         public RetryCommandMiddleware(int maxRetries, ILogger logger)
+            : this(maxRetries, TimeSpan.FromMilliseconds(50), 2.0, true, null, logger.Log)
         {
-            _maxRetries = maxRetries;
-            _logger = logger;
         }
 
-        /// <summary>
-        /// Asynchronously attempts to process a command with retry logic.
-        /// If an exception occurs during command execution, it will retry until the maximum number of retries is reached.
-        /// </summary>
-        /// <typeparam name="TCommand">The type of the command being processed. Must implement <see cref="ICommand"/>.</typeparam>
-        /// <param name="command">The command instance that is being processed.</param>
-        /// <param name="next">A delegate representing the next step in the command pipeline.</param>
-        /// <returns>A task representing the asynchronous operation.</returns>
-        /// <exception cref="Exception">Throws the exception if the maximum retry attempts are exceeded.</exception>
-        public async Task InvokeAsync<TCommand>(TCommand command, Func<Task> next) where TCommand : ICommand
+        public RetryCommandMiddleware(
+            int maxRetries,
+            TimeSpan initialDelay,
+            double backoffMultiplier = 2.0,
+            bool useJitter = true,
+            Func<Exception, bool>? shouldRetry = null,
+            Action<string>? logAction = null)
         {
-            int attempts = 0;
+            if (maxRetries < 0) throw new ArgumentOutOfRangeException(nameof(maxRetries), "Max retries cannot be negative.");
+            _maxRetries = maxRetries;
+            _initialDelay = initialDelay < TimeSpan.Zero ? TimeSpan.Zero : initialDelay;
+            _backoffMultiplier = backoffMultiplier < 1.0 ? 1.0 : backoffMultiplier;
+            _useJitter = useJitter;
+            _shouldRetry = shouldRetry;
+            _logAction = logAction ?? (_ => { });
+        }
 
-            // Retry loop to attempt command execution multiple times if an exception occurs.
+        /// <inheritdoc />
+        public async Task<TResult> InvokeAsync<TCommand, TResult>(
+            TCommand command,
+            Func<Task<TResult>> next,
+            CancellationToken cancellationToken = default)
+            where TCommand : ICommand<TResult>
+        {
+            int attempt = 0;
+            var currentDelay = _initialDelay;
+
             while (true)
             {
+                attempt++;
                 try
                 {
-                    // Execute the next action in the command pipeline (e.g., the next middleware or handler).
-                    await next();
-                    break; // Exit the loop if command execution succeeds.
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return await next();
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (attempt <= _maxRetries && (_shouldRetry == null || _shouldRetry(ex)))
                 {
-                    // Increment the number of attempts after each failure.
-                    attempts++;
+                    _logAction($"[Command] {command.GetType().Name} attempt {attempt} failed: {ex.Message}. Retrying...");
 
-                    // Log the failure attempt and the exception message.
-                    _logger.Log($"[Command] {command.GetType().Name} attempt {attempts} failed: {ex.Message}");
-
-                    // If the maximum number of retries has been reached, rethrow the exception.
-                    if (attempts >= _maxRetries)
-                        throw;
+                    if (currentDelay > TimeSpan.Zero)
+                    {
+                        var delayMs = currentDelay.TotalMilliseconds;
+                        if (_useJitter)
+                        {
+                            delayMs += _random.Next(0, (int)Math.Max(1, delayMs * 0.5));
+                        }
+                        await Task.Delay(TimeSpan.FromMilliseconds(delayMs), cancellationToken);
+                        currentDelay = TimeSpan.FromMilliseconds(currentDelay.TotalMilliseconds * _backoffMultiplier);
+                    }
                 }
             }
         }

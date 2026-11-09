@@ -1,21 +1,26 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace MicroserviceMonolith.Core.Events
 {
     /// <summary>
-    /// Defines the contract for event middleware in the event processing pipeline.
-    /// Middleware can perform actions before or after event handling, such as logging, error handling, or modifying the event.
+    /// Middleware that intercepts event publishing in the event pipeline.
     /// </summary>
     public interface IEventMiddleware
     {
         /// <summary>
-        /// Asynchronously processes an event through the middleware.
+        /// Asynchronously intercepts and processes the given event before and after handlers are invoked.
         /// </summary>
-        /// <typeparam name="TEvent">The type of event being processed. It must be a class.</typeparam>
-        /// <param name="event">The event instance to be processed by the middleware.</param>
-        /// <param name="next">The next function in the event handling pipeline, typically invoking the next middleware or the event handler.</param>
-        /// <returns>A task representing the asynchronous operation of the event middleware.</returns>
-        Task InvokeAsync<TEvent>(TEvent @event, Func<Task> next) where TEvent : class;
+        /// <typeparam name="TEvent">The event type.</typeparam>
+        /// <param name="event">The event instance.</param>
+        /// <param name="next">Delegate to invoke the rest of the pipeline.</param>
+        /// <param name="cancellationToken">Cancellation token for the operation.</param>
+        /// <returns>A task representing the operation.</returns>
+        Task InvokeAsync<TEvent>(
+            TEvent @event,
+            Func<Task> next,
+            CancellationToken cancellationToken = default)
+            where TEvent : class;
     }
 }

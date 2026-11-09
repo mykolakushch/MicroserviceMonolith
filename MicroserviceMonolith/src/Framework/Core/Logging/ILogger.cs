@@ -3,14 +3,14 @@ using System;
 namespace MicroserviceMonolith.Core.Logging
 {
     /// <summary>
-    /// Defines a contract for logging messages in the application.
+    /// Simple application logging contract for outputting diagnostic messages.
     /// </summary>
     public interface ILogger
     {
         /// <summary>
-        /// Logs a message.
+        /// Logs an informational message.
         /// </summary>
-        /// <param name="message">The message to be logged.</param>
+        /// <param name="message">The message to log.</param>
         void Log(string message);
     }
 }

@@ -1,5 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
+using System;
+using System.Collections.Concurrent;
+using System.Threading;
 using System.Threading.Tasks;
 using MicroserviceMonolith.Core.Events;
 using MicroserviceMonolith.Core.Modules;
@@ -7,46 +8,60 @@ using MicroserviceMonolith.Core.Modules;
 namespace MicroserviceMonolith.Core.UserActions
 {
     /// <summary>
-    /// Module for converting user actions into events.
+    /// Module for capturing user interactions and dispatching them into domain events or commands.
+    /// Thread-safe and supports cancellation tokens.
     /// </summary>
     public class UserAction : ModuleBase
     {
         private readonly IEventPublisher _eventPublisher;
-        private readonly Dictionary<string, Func<UserActionContext, Task>> _actionMappings = new();
+        private readonly ConcurrentDictionary<string, Func<UserActionContext, CancellationToken, Task>> _actionMappings = new();
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="UserAction"/> module.
+        /// Gets the associated event publisher.
         /// </summary>
-        /// <param name="eventPublisher">Event publisher to publish generated events.</param>
+        public IEventPublisher EventPublisher => _eventPublisher;
+
         public UserAction(IEventPublisher eventPublisher)
         {
-            _eventPublisher = eventPublisher;
+            _eventPublisher = eventPublisher ?? throw new ArgumentNullException(nameof(eventPublisher));
         }
 
         /// <summary>
-        /// Registers a user action with an event factory function that generates an event based on the action context.
+        /// Registers a user action with a handler that processes the action context asynchronously.
         /// </summary>
-        /// <param name="actionName">The name of the action.</param>
-        /// <param name="eventFactory">The function that generates an event based on the action context.</param>
         public void RegisterAction(string actionName, Func<UserActionContext, Task> eventFactory)
         {
+            if (string.IsNullOrWhiteSpace(actionName)) throw new ArgumentException("Action name cannot be empty.", nameof(actionName));
+            if (eventFactory == null) throw new ArgumentNullException(nameof(eventFactory));
+
+            _actionMappings[actionName] = (ctx, _) => eventFactory(ctx);
+        }
+
+        /// <summary>
+        /// Registers a cancellation-aware action handler.
+        /// </summary>
+        public void RegisterAction(string actionName, Func<UserActionContext, CancellationToken, Task> eventFactory)
+        {
+            if (string.IsNullOrWhiteSpace(actionName)) throw new ArgumentException("Action name cannot be empty.", nameof(actionName));
+            if (eventFactory == null) throw new ArgumentNullException(nameof(eventFactory));
+
             _actionMappings[actionName] = eventFactory;
         }
 
         /// <summary>
-        /// Dispatches a user action by converting it into an event using the registered event factory.
+        /// Dispatches a registered user action asynchronously.
         /// </summary>
-        /// <param name="actionName">The name of the action.</param>
-        /// <param name="context">The context of the action.</param>
-        /// <returns>A task that represents the asynchronous operation of dispatching the event.</returns>
-        /// <exception cref="ArgumentException">Thrown when the action is not registered.</exception>
-        public Task DispatchActionAsync(string actionName, UserActionContext context)
+        public Task DispatchActionAsync(string actionName, UserActionContext context, CancellationToken cancellationToken = default)
         {
-            if (_actionMappings.TryGetValue(actionName, out var factory))
+            if (string.IsNullOrWhiteSpace(actionName)) throw new ArgumentException("Action name cannot be empty.", nameof(actionName));
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            if (_actionMappings.TryGetValue(actionName, out var handler))
             {
-                return factory(context);
+                return handler(context, cancellationToken);
             }
-            throw new ArgumentException($"Action '{actionName}' is not registered.");
+
+            throw new ArgumentException($"Action '{actionName}' is not registered.", nameof(actionName));
         }
     }
 }

@@ -1,18 +1,30 @@
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace MicroserviceMonolith.Core.Events
 {
     /// <summary>
-    /// Defines a contract for event publishing. The publisher is responsible for distributing events to subscribers.
+    /// Contract for publishing domain or integration events to subscribed modules.
     /// </summary>
     public interface IEventPublisher
     {
         /// <summary>
-        /// Asynchronously publishes an event to all registered subscribers.
+        /// Publishes an event to all subscribers using the default sequential strategy.
         /// </summary>
-        /// <typeparam name="TEvent">The type of event to be published. It must be a class.</typeparam>
-        /// <param name="event">The event instance to be published to the subscribers.</param>
-        /// <returns>A task representing the asynchronous operation of publishing the event.</returns>
-        Task PublishAsync<TEvent>(TEvent @event) where TEvent : class;
+        /// <typeparam name="TEvent">The type of event.</typeparam>
+        /// <param name="event">The event instance.</param>
+        /// <param name="cancellationToken">Cancellation token for the operation.</param>
+        /// <returns>A task representing the publish operation.</returns>
+        Task PublishAsync<TEvent>(TEvent @event, CancellationToken cancellationToken = default) where TEvent : class;
+
+        /// <summary>
+        /// Publishes an event to all subscribers using a specified execution strategy.
+        /// </summary>
+        /// <typeparam name="TEvent">The type of event.</typeparam>
+        /// <param name="event">The event instance.</param>
+        /// <param name="strategy">The dispatch strategy (Sequential or Parallel).</param>
+        /// <param name="cancellationToken">Cancellation token for the operation.</param>
+        /// <returns>A task representing the publish operation.</returns>
+        Task PublishAsync<TEvent>(TEvent @event, EventPublishStrategy strategy, CancellationToken cancellationToken = default) where TEvent : class;
     }
 }

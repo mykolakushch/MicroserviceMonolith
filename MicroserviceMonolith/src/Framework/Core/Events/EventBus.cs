@@ -2,103 +2,236 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MicroserviceMonolith.Core.Events
 {
     /// <summary>
-    /// An event bus that allows publishing and subscribing to events.
-    /// It handles event propagation and supports middleware for additional processing.
+    /// High-performance, thread-safe in-memory event bus supporting publish/subscribe,
+    /// pipeline middlewares, sequential or parallel dispatch, and Dependency Injection resolution.
     /// </summary>
     public class EventBus : IEventPublisher, IEventSubscriber
     {
-        // A dictionary that stores event handlers for different event types.
-        // The key is the event type, and the value is a list of handlers (functions that process the event).
-        private readonly ConcurrentDictionary<Type, List<Func<object, Task>>> _handlers = new();
-
-        // A list that holds middleware instances used during event processing.
+        private readonly IServiceProvider? _serviceProvider;
+        private readonly ConcurrentDictionary<Type, List<Func<object, CancellationToken, Task>>> _handlers = new();
         private readonly List<IEventMiddleware> _middlewares = new();
+        private readonly object _middlewareLock = new();
+        private readonly object _subscribersLock = new();
 
         /// <summary>
-        /// Adds a middleware to the event bus.
-        /// The middleware will be executed in the event processing pipeline.
+        /// Initializes a new instance of <see cref="EventBus"/> for manual subscription.
         /// </summary>
-        /// <param name="middleware">The middleware instance to be added to the pipeline.</param>
-        public void AddMiddleware(IEventMiddleware middleware)
+        public EventBus() : this(null)
         {
-            // Adds the middleware to the list of middlewares.
-            _middlewares.Add(middleware);
         }
 
         /// <summary>
-        /// Publishes an event asynchronously, triggering all handlers associated with the event type.
-        /// The event will pass through the middleware pipeline before being handled.
+        /// Initializes a new instance of <see cref="EventBus"/> with dependency injection support.
         /// </summary>
-        /// <typeparam name="TEvent">The type of the event being published. It must be a class.</typeparam>
-        /// <param name="event">The event instance to be published.</param>
-        /// <returns>A task representing the asynchronous operation of event publication.</returns>
-        public async Task PublishAsync<TEvent>(TEvent @event) where TEvent : class
+        /// <param name="serviceProvider">Optional service provider to resolve event handlers and middlewares.</param>
+        public EventBus(IServiceProvider? serviceProvider)
         {
-            // Check if there are any handlers registered for the specified event type.
-            if (_handlers.TryGetValue(typeof(TEvent), out var handlers))
+            _serviceProvider = serviceProvider;
+        }
+
+        /// <summary>
+        /// Adds a middleware component to the event pipeline.
+        /// </summary>
+        public void AddMiddleware(IEventMiddleware middleware)
+        {
+            if (middleware == null) throw new ArgumentNullException(nameof(middleware));
+            lock (_middlewareLock)
             {
-                // For each handler, create a pipeline with the middleware and the handler.
-                foreach (var handler in handlers)
-                {
-                    // Initial pipeline with the handler.
-                    Func<Task> pipeline = () => handler(@event);
-
-                    // Reverse the middlewares to ensure they are applied in the correct order.
-                    foreach (var middleware in _middlewares.AsEnumerable().Reverse())
-                    {
-                        // Each middleware is responsible for invoking the next step in the pipeline.
-                        var next = pipeline;
-                        pipeline = () => middleware.InvokeAsync(@event, next);
-                    }
-
-                    // Execute the pipeline, which will invoke the middleware and eventually the handler.
-                    await pipeline();
-                }
+                _middlewares.Add(middleware);
             }
         }
 
-        /// <summary>
-        /// Subscribes to an event of a specific type and provides a handler that processes the event.
-        /// </summary>
-        /// <typeparam name="TEvent">The type of the event to subscribe to. It must be a class.</typeparam>
-        /// <param name="handler">A function that processes the event when it is published.</param>
-        /// <returns>A disposable subscription object that can be used to unsubscribe from the event.</returns>
-        public IDisposable Subscribe<TEvent>(Func<TEvent, Task> handler) where TEvent : class
+        /// <inheritdoc />
+        public Task PublishAsync<TEvent>(TEvent @event, CancellationToken cancellationToken = default) where TEvent : class
         {
-            // Retrieve or create a list of handlers for the specified event type.
-            var handlers = _handlers.GetOrAdd(typeof(TEvent), _ => new List<Func<object, Task>>());
-
-            // Wrap the handler to match the expected delegate type (Func<object, Task>).
-            Func<object, Task> wrapped = (evt) => handler((TEvent)evt);
-
-            // Add the wrapped handler to the list of handlers.
-            handlers.Add(wrapped);
-
-            // Return a subscription that allows for unsubscribing from the event.
-            return new Subscription(() => handlers.Remove(wrapped));
+            return PublishAsync(@event, EventPublishStrategy.Sequential, cancellationToken);
         }
 
-        // A private class that represents a subscription, allowing for unsubscription.
-        private class Subscription : IDisposable
+        /// <inheritdoc />
+        public async Task PublishAsync<TEvent>(
+            TEvent @event,
+            EventPublishStrategy strategy,
+            CancellationToken cancellationToken = default)
+            where TEvent : class
         {
-            // Action to unsubscribe from the event.
-            private readonly Action _unsubscribe;
+            if (@event == null) throw new ArgumentNullException(nameof(@event));
 
-            /// <summary>
-            /// Initializes a new instance of the <see cref="Subscription"/> class.
-            /// </summary>
-            /// <param name="unsubscribe">The action that removes the handler from the list of subscribers.</param>
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (strategy == EventPublishStrategy.Background)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await PublishCoreAsync(@event, EventPublishStrategy.Sequential, CancellationToken.None);
+                    }
+                    catch
+                    {
+                        // Background dispatch error handling
+                    }
+                }, CancellationToken.None);
+                return;
+            }
+
+            await PublishCoreAsync(@event, strategy, cancellationToken);
+        }
+
+        private async Task PublishCoreAsync<TEvent>(
+            TEvent @event,
+            EventPublishStrategy strategy,
+            CancellationToken cancellationToken)
+            where TEvent : class
+        {
+            var allMiddlewares = new List<IEventMiddleware>();
+            lock (_middlewareLock)
+            {
+                allMiddlewares.AddRange(_middlewares);
+            }
+
+            IServiceScope? scope = null;
+            try
+            {
+                IServiceProvider? sp = _serviceProvider;
+                if (sp != null)
+                {
+                    scope = sp.CreateScope();
+                    sp = scope.ServiceProvider;
+                    allMiddlewares.AddRange(sp.GetServices<IEventMiddleware>());
+                }
+
+                // Core dispatch delegate
+                Func<Task> dispatchAction = async () =>
+                {
+                    var handlersToExecute = new List<Func<CancellationToken, Task>>();
+
+                    // 1. Snapshot manual subscribers thread-safely
+                    if (_handlers.TryGetValue(typeof(TEvent), out var list))
+                    {
+                        Func<object, CancellationToken, Task>[] snapshot;
+                        lock (_subscribersLock)
+                        {
+                            snapshot = list.ToArray();
+                        }
+                        foreach (var handler in snapshot)
+                        {
+                            handlersToExecute.Add(ct => handler(@event, ct));
+                        }
+                    }
+
+                    // 2. Resolve DI event handlers
+                    if (sp != null)
+                    {
+                        var diHandlers = sp.GetServices<IEventHandler<TEvent>>();
+                        foreach (var diHandler in diHandlers)
+                        {
+                            handlersToExecute.Add(ct => diHandler.HandleAsync(@event, ct));
+                        }
+                    }
+
+                    if (handlersToExecute.Count == 0)
+                    {
+                        return;
+                    }
+
+                    if (strategy == EventPublishStrategy.Parallel)
+                    {
+                        var tasks = handlersToExecute.Select(h => h(cancellationToken));
+                        await Task.WhenAll(tasks);
+                    }
+                    else
+                    {
+                        var exceptions = new List<Exception>();
+                        foreach (var handler in handlersToExecute)
+                        {
+                            try
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+                                await handler(cancellationToken);
+                            }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                exceptions.Add(ex);
+                            }
+                        }
+
+                        if (exceptions.Count == 1)
+                        {
+                            throw exceptions[0];
+                        }
+                        if (exceptions.Count > 1)
+                        {
+                            throw new AggregateException($"Multiple exceptions occurred while publishing event '{typeof(TEvent).Name}'.", exceptions);
+                        }
+                    }
+                };
+
+                // Build middleware pipeline around the publication
+                Func<Task> pipeline = dispatchAction;
+
+                for (int i = allMiddlewares.Count - 1; i >= 0; i--)
+                {
+                    var middleware = allMiddlewares[i];
+                    var next = pipeline;
+                    pipeline = () => middleware.InvokeAsync(@event, next, cancellationToken);
+                }
+
+                await pipeline();
+            }
+            finally
+            {
+                scope?.Dispose();
+            }
+        }
+
+        /// <inheritdoc />
+        public IDisposable Subscribe<TEvent>(Func<TEvent, CancellationToken, Task> handler) where TEvent : class
+        {
+            if (handler == null) throw new ArgumentNullException(nameof(handler));
+
+            var list = _handlers.GetOrAdd(typeof(TEvent), _ => new List<Func<object, CancellationToken, Task>>());
+
+            Func<object, CancellationToken, Task> wrapped = (evt, ct) => handler((TEvent)evt, ct);
+
+            lock (_subscribersLock)
+            {
+                list.Add(wrapped);
+            }
+
+            return new Subscription(() =>
+            {
+                lock (_subscribersLock)
+                {
+                    list.Remove(wrapped);
+                }
+            });
+        }
+
+        /// <inheritdoc />
+        public IDisposable Subscribe<TEvent>(Func<TEvent, Task> handler) where TEvent : class
+        {
+            if (handler == null) throw new ArgumentNullException(nameof(handler));
+            return Subscribe<TEvent>((evt, _) => handler(evt));
+        }
+
+        private sealed class Subscription : IDisposable
+        {
+            private Action? _unsubscribe;
+
             public Subscription(Action unsubscribe) => _unsubscribe = unsubscribe;
 
-            /// <summary>
-            /// Disposes of the subscription and removes the handler from the list of subscribers.
-            /// </summary>
-            public void Dispose() => _unsubscribe();
+            public void Dispose()
+            {
+                var action = Interlocked.Exchange(ref _unsubscribe, null);
+                action?.Invoke();
+            }
         }
     }
 }

@@ -1,39 +1,53 @@
+using System;
+using System.Threading;
 using System.Threading.Tasks;
 using MicroserviceMonolith.Core.Logging;
 
 namespace MicroserviceMonolith.Core.Events
 {
     /// <summary>
-    /// An implementation of <see cref="IEventMiddleware"/> that logs the start and end of event processing.
-    /// This middleware logs the event type when the event processing begins and ends.
+    /// Event middleware that logs the publication lifecycle of events.
     /// </summary>
     public class LoggingEventMiddleware : IEventMiddleware
     {
-        private readonly ILogger _logger;
+        private readonly Action<string> _logAction;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="LoggingEventMiddleware"/> class.
-        /// </summary>
-        /// <param name="logger">The logger used to log event processing details.</param>
-        public LoggingEventMiddleware(ILogger logger) => _logger = logger;
-
-        /// <summary>
-        /// Asynchronously processes the event and logs the start and end of its execution.
-        /// </summary>
-        /// <typeparam name="TEvent">The type of the event being processed. Must be a class.</typeparam>
-        /// <param name="event">The event instance to be processed.</param>
-        /// <param name="next">A function representing the next action in the event processing pipeline (the next middleware or event handler).</param>
-        /// <returns>A task representing the asynchronous operation of processing the event.</returns>
-        public async Task InvokeAsync<TEvent>(TEvent @event, Func<Task> next) where TEvent : class
+        public LoggingEventMiddleware(ILogger logger)
         {
-            // Log the start of the event processing, including the event type.
-            _logger.Log($"[Event] Start {@event.GetType().Name}");
-            
-            // Proceed to the next step in the event processing pipeline.
-            await next();
-            
-            // Log the end of the event processing, including the event type.
-            _logger.Log($"[Event] End {@event.GetType().Name}");
+            if (logger == null) throw new ArgumentNullException(nameof(logger));
+            _logAction = logger.Log;
+        }
+
+        public LoggingEventMiddleware(Microsoft.Extensions.Logging.ILogger<LoggingEventMiddleware> logger)
+        {
+            if (logger == null) throw new ArgumentNullException(nameof(logger));
+            _logAction = msg => Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(logger, "{Message}", msg);
+        }
+
+        public LoggingEventMiddleware(Action<string> logAction)
+        {
+            _logAction = logAction ?? throw new ArgumentNullException(nameof(logAction));
+        }
+
+        /// <inheritdoc />
+        public async Task InvokeAsync<TEvent>(
+            TEvent @event,
+            Func<Task> next,
+            CancellationToken cancellationToken = default)
+            where TEvent : class
+        {
+            var eventName = @event.GetType().Name;
+            _logAction($"[Event] Start {eventName}");
+            try
+            {
+                await next();
+                _logAction($"[Event] End {eventName}");
+            }
+            catch (Exception ex)
+            {
+                _logAction($"[Event] Failed {eventName}: {ex.Message}");
+                throw;
+            }
         }
     }
 }

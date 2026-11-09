@@ -1,22 +1,25 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
-		<TargetFramework>net6.0</TargetFramework>
+		<TargetFrameworks>net8.0;net9.0</TargetFrameworks>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
-		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-		<AssemblyName>Framework.Core</AssemblyName>
-		<RootNamespace>Framework.Core</RootNamespace>
+		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+		<AssemblyName>MicroserviceMonolith</AssemblyName>
+		<RootNamespace>MicroserviceMonolith</RootNamespace>
 		<PackageId>MicroserviceMonolith</PackageId>
 		<Version>1.0.0</Version>
 		<Authors>Mykola Kusch</Authors>
 		<Company>mnml</Company>
-		<Description>
-			MicroserviceMonolith is a modular monolith framework that combines the simplicity of a traditional
-			monolith with the benefits of microservices. It offers extremely loosely coupled modules, featuring built-in event and command buses,
-			comprehensive module management, and an asynchronous execution queue with middleware support for logging, error handling, and retries.
-			This framework enables scalable, maintainable, and decoupled application development.
-		</Description>
+		<Description>MicroserviceMonolith is a comprehensive, production-ready modular monolith framework for .NET. It features decoupled modules with lifecycle management, in-memory command and query buses (CQRS), event bus with flexible dispatch strategies, pipeline behaviors (logging, retry, error handling, performance tracking), background execution channels, transactional outbox pattern, and full Microsoft.Extensions.DependencyInjection integration.</Description>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 		<RepositoryUrl>https://github.com/nikolaykusch/MicroserviceMonolith</RepositoryUrl>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);1591</NoWarn>
 	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
+	</ItemGroup>
 </Project>

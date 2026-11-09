@@ -1,110 +1,305 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using MicroserviceMonolith.Core.Commands;
+using MicroserviceMonolith.Core.DependencyInjection;
 using MicroserviceMonolith.Core.Events;
-using MicroserviceMonolith.Core.Logging;
-using MicroserviceMonolith.Core.UserActions;
+using MicroserviceMonolith.Core.Execution;
 using MicroserviceMonolith.Core.Modules;
+using MicroserviceMonolith.Core.Outbox;
+using MicroserviceMonolith.Core.Queries;
+using MicroserviceMonolith.Core.UserActions;
 
-// Для прикладу створимо простий модуль, який обробляє запити на оновлення "погоди"
-// та публікує подію про зміну погоди.
-
-namespace ExampleApp
+namespace FrameworkExample
 {
-    // Події для WeatherModule (розміщено в окремій збірці або просторі імен за бажанням)
-    namespace ExampleApp.Events
-    {
-        public record WeatherUpdateRequestEvent();
-        public record WeatherChangedEvent(string Weather);
-    }
+    // =========================================================================
+    // 1. DOMAIN MESSAGES (Contracts for Cross-Module Communication)
+    // =========================================================================
 
-    // Простий модуль, який отримує запит на оновлення погоди
-    // та публікує подію про зміну погоди.
-    public class WeatherModule : ModuleBase
-    {
-        private readonly IEventPublisher _eventPublisher;
-        private IDisposable _weatherRequestSubscription;
+    public record OrderItem(string ProductId, int Quantity, decimal UnitPrice);
 
-        public WeatherModule(IEventPublisher eventPublisher)
+    public record CreateOrderCommand(string CustomerId, List<OrderItem> Items) : ICommand<CreateOrderResult>;
+
+    public record CreateOrderResult(Guid OrderId, decimal TotalAmount);
+
+    public record GetStockQuery(string ProductId) : IQuery<StockResponse>;
+
+    public record StockResponse(string ProductId, int AvailableQuantity);
+
+    public record OrderCreatedEvent(Guid OrderId, string CustomerId, decimal TotalAmount) : EventBase;
+
+    // =========================================================================
+    // 2. ORDERING MODULE
+    // =========================================================================
+
+    public class OrderingModule : ModuleBase
+    {
+        public override string Name => "OrderingModule";
+
+        public override void ConfigureServices(IServiceCollection services, IConfiguration configuration)
         {
-            _eventPublisher = eventPublisher;
+            // Register command handlers and module-specific internal services
+            services.AddTransient<ICommandHandler<CreateOrderCommand, CreateOrderResult>, CreateOrderCommandHandler>();
         }
 
-        public override Task InitializeAsync()
+        public override Task InitializeAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken = default)
         {
-            // Підписка на запит на оновлення погоди (у реальному випадку можна використати EventSubscriber)
-            _weatherRequestSubscription = (_eventPublisher as IEventSubscriber)
-                .Subscribe<ExampleApp.Events.WeatherUpdateRequestEvent>(HandleWeatherUpdateRequest);
+            Console.WriteLine($"[{Name}] Initialized successfully.");
             return Task.CompletedTask;
         }
 
-        private async Task HandleWeatherUpdateRequest(ExampleApp.Events.WeatherUpdateRequestEvent _)
+        public override Task ShutdownAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken = default)
         {
-            Random rnd = new Random();
-            for (int i = 0; i < 1; i++)
+            Console.WriteLine($"[{Name}] Gracefully shut down.");
+            return Task.CompletedTask;
+        }
+
+        public class CreateOrderCommandHandler : ICommandHandler<CreateOrderCommand, CreateOrderResult>
+        {
+            private readonly IEventPublisher _eventPublisher;
+
+            public CreateOrderCommandHandler(IEventPublisher eventPublisher)
             {
-                await UpdateWeatherAsync();
+                _eventPublisher = eventPublisher;
+            }
+
+            public async Task<CreateOrderResult> HandleAsync(CreateOrderCommand command, CancellationToken cancellationToken = default)
+            {
+                decimal total = 0;
+                foreach (var item in command.Items)
+                {
+                    total += item.Quantity * item.UnitPrice;
+                }
+
+                var orderId = Guid.NewGuid();
+                Console.WriteLine($"[OrderingModule] Order created: {orderId} for customer {command.CustomerId}, Total: {total:C}");
+
+                // Publish domain event to notify other modules
+                await _eventPublisher.PublishAsync(new OrderCreatedEvent(orderId, command.CustomerId, total), cancellationToken);
+
+                return new CreateOrderResult(orderId, total);
+            }
+        }
+    }
+
+    // =========================================================================
+    // 3. INVENTORY MODULE
+    // =========================================================================
+
+    public class InventoryModule : ModuleBase
+    {
+        public override string Name => "InventoryModule";
+
+        public override void ConfigureServices(IServiceCollection services, IConfiguration configuration)
+        {
+            services.AddSingleton<InventoryState>();
+            services.AddTransient<IQueryHandler<GetStockQuery, StockResponse>, GetStockQueryHandler>();
+            services.AddTransient<IEventHandler<OrderCreatedEvent>, OrderCreatedInventoryHandler>();
+        }
+
+        public class InventoryState
+        {
+            private readonly Dictionary<string, int> _stock = new()
+            {
+                ["PROD-001"] = 150,
+                ["PROD-002"] = 75
+            };
+
+            public int GetStock(string productId) => _stock.TryGetValue(productId, out var qty) ? qty : 0;
+
+            public void ReserveStock(string productId, int quantity)
+            {
+                if (_stock.ContainsKey(productId))
+                {
+                    _stock[productId] = Math.Max(0, _stock[productId] - quantity);
+                }
             }
         }
 
-        private async Task UpdateWeatherAsync()
+        public class GetStockQueryHandler : IQueryHandler<GetStockQuery, StockResponse>
         {
-            // Симуляція отримання даних (наприклад, запит до сервісу)
-            string weather = "Сонячно";
-            await _eventPublisher.PublishAsync(new ExampleApp.Events.WeatherChangedEvent(weather));
+            private readonly InventoryState _state;
+
+            public GetStockQueryHandler(InventoryState state) => _state = state;
+
+            public Task<StockResponse> HandleAsync(GetStockQuery query, CancellationToken cancellationToken = default)
+            {
+                var qty = _state.GetStock(query.ProductId);
+                return Task.FromResult(new StockResponse(query.ProductId, qty));
+            }
         }
 
-        public IDisposable SubscribeToWeatherChanged(Func<ExampleApp.Events.WeatherChangedEvent, Task> handler)
+        public class OrderCreatedInventoryHandler : IEventHandler<OrderCreatedEvent>
         {
-            return (_eventPublisher as IEventSubscriber).Subscribe(handler);
-        }
+            private readonly InventoryState _state;
 
-        public override Task ShutdownAsync()
-        {
-            _weatherRequestSubscription?.Dispose();
-            return Task.CompletedTask;
+            public OrderCreatedInventoryHandler(InventoryState state) => _state = state;
+
+            public Task HandleAsync(OrderCreatedEvent @event, CancellationToken cancellationToken = default)
+            {
+                Console.WriteLine($"[InventoryModule] Received OrderCreatedEvent for order {@event.OrderId}. Reserving stock...");
+                _state.ReserveStock("PROD-001", 1);
+                return Task.CompletedTask;
+            }
         }
     }
-    class Program
+
+    // =========================================================================
+    // 4. NOTIFICATION MODULE
+    // =========================================================================
+
+    public class NotificationModule : ModuleBase
     {
-        static async Task Main(string[] args)
+        public override string Name => "NotificationModule";
+
+        public override void ConfigureServices(IServiceCollection services, IConfiguration configuration)
         {
-            ILogger logger = new ConsoleLogger();
+            services.AddTransient<IEventHandler<OrderCreatedEvent>, OrderCreatedNotificationHandler>();
+        }
 
-            // Налаштування EventBus із middleware (при потребі)
-            var eventBus = new EventBus();
-            eventBus.AddMiddleware(new ErrorHandlingEventMiddleware(logger));
-            eventBus.AddMiddleware(new RetryEventMiddleware(3, logger));
-            eventBus.AddMiddleware(new LoggingEventMiddleware(logger));
+        public class OrderCreatedNotificationHandler : IEventHandler<OrderCreatedEvent>
+        {
+            private readonly ExecutionQueue _queue;
 
-            // Створення та ініціалізація WeatherModule
-            var weatherModule = new WeatherModule(eventBus);
-            await weatherModule.InitializeAsync();
-            weatherModule.SubscribeToWeatherChanged(async e =>
+            public OrderCreatedNotificationHandler(ExecutionQueue queue)
             {
-                logger.Log($"Погода змінена: {e.Weather}");
+                _queue = queue;
+            }
+
+            public Task HandleAsync(OrderCreatedEvent @event, CancellationToken cancellationToken = default)
+            {
+                // Enqueue an asynchronous background notification via Channel without blocking the caller
+                _queue.Enqueue(async ct =>
+                {
+                    await Task.Delay(100, ct); // Simulate email dispatch
+                    Console.WriteLine($"[NotificationModule - Background Worker] Email sent to {@event.CustomerId}: Order {@event.OrderId} confirmed for {@event.TotalAmount:C}!");
+                });
+
+                return Task.CompletedTask;
+            }
+        }
+    }
+
+    // =========================================================================
+    // 5. APPLICATION ENTRY POINT
+    // =========================================================================
+
+    internal class Program
+    {
+        private static async Task Main(string[] args)
+        {
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.WriteLine("==========================================================");
+            Console.WriteLine("  MicroserviceMonolith: Modular Monolith Showcase");
+            Console.WriteLine("==========================================================\n");
+
+            // 1. Setup DI Container & Configuration
+            var configuration = new ConfigurationBuilder().Build();
+            var services = new ServiceCollection();
+
+            services.AddLogging(logging =>
+            {
+                logging.AddConsole();
+                logging.SetMinimumLevel(LogLevel.Information);
+            });
+
+            // 2. Configure MicroserviceMonolith with assembly scanning
+            services.AddMicroserviceMonolith(options =>
+            {
+                options.Configuration = configuration;
+                options.RegisterServicesFromAssemblyContaining<Program>();
+                options.EnableOutbox = true;
+                options.ExecutionQueueOptions.WorkerCount = 2;
+            });
+
+            // 3. Register Middlewares for Command, Query, and Event Pipelines
+            services.AddSingleton<ICommandMiddleware>(sp =>
+                new LoggingCommandMiddleware(sp.GetRequiredService<ILogger<LoggingCommandMiddleware>>()));
+            services.AddSingleton<ICommandMiddleware>(_ =>
+                new PerformanceCommandMiddleware(TimeSpan.FromMilliseconds(500), msg => Console.WriteLine(msg)));
+
+            services.AddSingleton<IQueryMiddleware>(sp =>
+                new LoggingQueryMiddleware(sp.GetRequiredService<ILogger<LoggingQueryMiddleware>>()));
+
+            services.AddSingleton<IEventMiddleware>(sp =>
+                new LoggingEventMiddleware(sp.GetRequiredService<ILogger<LoggingEventMiddleware>>()));
+
+            // 4. Build Service Provider
+            var serviceProvider = services.BuildServiceProvider();
+
+            // 5. Initialize Modules
+            var moduleManager = serviceProvider.GetRequiredService<ModuleManager>();
+            await moduleManager.InitializeModulesAsync(serviceProvider);
+            Console.WriteLine($"\nRegistered modules: {string.Join(", ", moduleManager.Modules.Select(m => m.Name))}\n");
+
+            // 6. Demonstrate CQRS Query Bus
+            Console.WriteLine("--- 1. Executing CQRS Query ---");
+            var queryBus = serviceProvider.GetRequiredService<IQueryBus>();
+            var stockBefore = await queryBus.QueryAsync(new GetStockQuery("PROD-001"));
+            Console.WriteLine($"Query result: Product '{stockBefore.ProductId}' available stock = {stockBefore.AvailableQuantity}\n");
+
+            // 7. Demonstrate CQRS Command Bus (Cross-module event flow)
+            Console.WriteLine("--- 2. Executing CQRS Command ---");
+            var commandBus = serviceProvider.GetRequiredService<ICommandBus>();
+            var createOrderCmd = new CreateOrderCommand(
+                CustomerId: "customer-42",
+                Items: new List<OrderItem>
+                {
+                    new("PROD-001", 1, 99.95m),
+                    new("PROD-002", 2, 49.50m)
+                });
+
+            var orderResult = await commandBus.SendAsync<CreateOrderCommand, CreateOrderResult>(createOrderCmd);
+            Console.WriteLine($"Command returned result: OrderId={orderResult.OrderId}, Total={orderResult.TotalAmount:C}\n");
+
+            // 8. Verify Query after Event Processing
+            var stockAfter = await queryBus.QueryAsync(new GetStockQuery("PROD-001"));
+            Console.WriteLine($"Query result after order: Product '{stockAfter.ProductId}' stock = {stockAfter.AvailableQuantity}\n");
+
+            // 9. Demonstrate User Actions module
+            Console.WriteLine("--- 3. Dispatching User Action ---");
+            var eventBus = serviceProvider.GetRequiredService<EventBus>();
+            var userAction = new UserAction(eventBus);
+
+            userAction.RegisterAction("AddToCart", async ctx =>
+            {
+                Console.WriteLine($"[UserAction] Action '{ctx.Args}' initiated by sender '{ctx.Sender}'.");
                 await Task.CompletedTask;
             });
 
-            // Створення модуля для перетворення дій користувача у події
-            var userActionsModule = new UserAction(eventBus);
-            userActionsModule.RegisterAction("UpdateWeather", async context =>
+            await userAction.DispatchActionAsync("AddToCart", new UserActionContext("WebUI", "PROD-001 (Qty: 2)"));
+
+            // 10. Demonstrate Transactional Outbox
+            Console.WriteLine("\n--- 4. Demonstrating Transactional Outbox Pattern ---");
+            var outboxStore = serviceProvider.GetRequiredService<IOutboxStore>();
+            var outboxProcessor = serviceProvider.GetRequiredService<IOutboxProcessor>();
+
+            var outboxEvent = new OrderCreatedEvent(Guid.NewGuid(), "outbox-customer", 250m);
+            await outboxStore.SaveAsync(new OutboxMessage
             {
-                logger.Log($"Дія UpdateWeather отримана. Тривалість: {context.Args} мс, джерело: {context.Sender}");
-                await eventBus.PublishAsync(new ExampleApp.Events.WeatherUpdateRequestEvent());
+                EventType = nameof(OrderCreatedEvent),
+                Event = outboxEvent
             });
+            Console.WriteLine($"Saved pending event {outboxEvent.EventId} to Outbox.");
 
-            for (int i = 0; i < 10; i++)
-            {
-                // Імітація дії користувача з параметрами
-                var actionContext = new UserActionContext("Button1", 500);  
-                await userActionsModule.DispatchActionAsync("UpdateWeather", actionContext);
+            var processedCount = await outboxProcessor.ProcessBatchAsync();
+            Console.WriteLine($"OutboxProcessor drained and published {processedCount} message(s).\n");
 
-                await Task.Delay(1000);
-            }
+            // Allow background channel tasks to finish
+            await Task.Delay(300);
 
-            // Очікування для демонстрації роботи
-            await Task.Delay(1000);
-            //await weatherModule.ShutdownAsync();
+            // 11. Graceful Shutdown
+            Console.WriteLine("--- 5. Graceful Shutdown ---");
+            await moduleManager.ShutdownModulesAsync(serviceProvider);
+
+            var queue = serviceProvider.GetRequiredService<ExecutionQueue>();
+            await queue.DisposeAsync();
+
+            Console.WriteLine("\n[Application] Shutdown completed cleanly.");
         }
     }
 }

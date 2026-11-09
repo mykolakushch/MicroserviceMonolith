@@ -1,25 +1,53 @@
+using System;
+using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MicroserviceMonolith.Core.Modules
 {
     /// <summary>
-    /// Defines the contract for a module in the microservice monolith architecture.
-    /// Modules are responsible for initialization and shutdown operations.
+    /// Defines the contract for an encapsulated business module in the modular monolith architecture.
+    /// Each module can configure its own private services and participate in application lifecycle events.
     /// </summary>
     public interface IModule
     {
         /// <summary>
-        /// Asynchronously initializes the module.
-        /// This method is used to set up any required resources or configurations before the module starts working.
+        /// Unique name of the module.
         /// </summary>
-        /// <returns>A task representing the asynchronous initialization process.</returns>
+        string Name { get; }
+
+        /// <summary>
+        /// Configures services, repositories, and dependencies specific to this module into the DI container.
+        /// </summary>
+        /// <param name="services">The application service collection.</param>
+        /// <param name="configuration">The application configuration root.</param>
+        void ConfigureServices(IServiceCollection services, IConfiguration configuration);
+
+        /// <summary>
+        /// Asynchronously initializes the module after the service provider is built.
+        /// </summary>
+        /// <param name="serviceProvider">The root service provider.</param>
+        /// <param name="cancellationToken">Cancellation token for the operation.</param>
+        /// <returns>A task representing the initialization operation.</returns>
+        Task InitializeAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Asynchronously shuts down the module when the application is stopping.
+        /// </summary>
+        /// <param name="serviceProvider">The root service provider.</param>
+        /// <param name="cancellationToken">Cancellation token for the operation.</param>
+        /// <returns>A task representing the shutdown operation.</returns>
+        Task ShutdownAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Legacy parameterless initialization.
+        /// </summary>
         Task InitializeAsync();
 
         /// <summary>
-        /// Asynchronously shuts down the module.
-        /// This method is used to clean up resources or perform any shutdown operations when the module is no longer needed.
+        /// Legacy parameterless shutdown.
         /// </summary>
-        /// <returns>A task representing the asynchronous shutdown process.</returns>
         Task ShutdownAsync();
     }
 }

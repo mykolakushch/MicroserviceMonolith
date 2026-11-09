@@ -1,31 +1,47 @@
-﻿using System;
+using System;
+using System.Threading;
 
 namespace MicroserviceMonolith.Core.UserActions
 {
     /// <summary>
-    /// Represents the context of a user action, including the sender and associated arguments.
+    /// Represents the contextual state and metadata of a user or system interaction triggering an action.
     /// </summary>
     public record UserActionContext
     {
         /// <summary>
-        /// Initializes a new instance of the <see cref="UserActionContext"/> with the sender and arguments.
+        /// Source identifier or entity that initiated the action.
         /// </summary>
-        /// <param name="sender">The source of the action (e.g., the user, UI element, etc.).</param>
-        /// <param name="args">The arguments related to the action (e.g., data, parameters, etc.).</param>
-        public UserActionContext(object sender, object args)
-        {
-            Sender = sender;
-            Args = args;
-        }
+        public object Sender { get; init; }
 
         /// <summary>
-        /// Gets the arguments associated with the user action.
+        /// Payload or arguments associated with the action.
         /// </summary>
         public object Args { get; init; }
 
         /// <summary>
-        /// Gets the sender of the user action.
+        /// Optional correlation identifier for distributed tracing.
         /// </summary>
-        public object Sender { get; init; }
+        public string? CorrelationId { get; init; }
+
+        public UserActionContext(object sender, object args, string? correlationId = null)
+        {
+            Sender = sender ?? throw new ArgumentNullException(nameof(sender));
+            Args = args ?? throw new ArgumentNullException(nameof(args));
+            CorrelationId = correlationId;
+        }
+    }
+
+    /// <summary>
+    /// Strongly-typed context for a user action.
+    /// </summary>
+    /// <typeparam name="TArgs">Type of payload arguments.</typeparam>
+    public record UserActionContext<TArgs> : UserActionContext
+    {
+        public new TArgs Args => (TArgs)base.Args;
+
+        public UserActionContext(object sender, TArgs args, string? correlationId = null)
+            : base(sender, args!, correlationId)
+        {
+        }
     }
 }

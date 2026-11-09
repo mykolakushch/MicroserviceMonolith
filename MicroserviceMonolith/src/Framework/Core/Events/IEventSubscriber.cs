@@ -1,19 +1,28 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace MicroserviceMonolith.Core.Events
 {
     /// <summary>
-    /// Defines a contract for event subscribers. The subscriber listens for events and handles them when they are published.
+    /// Contract for subscribing to events published across the application.
     /// </summary>
     public interface IEventSubscriber
     {
         /// <summary>
-        /// Subscribes to an event and registers a handler to process the event when it is published.
+        /// Subscribes to an event with a cancellation-aware asynchronous handler.
         /// </summary>
-        /// <typeparam name="TEvent">The type of event to subscribe to. It must be a class.</typeparam>
-        /// <param name="handler">The handler function to process the event when it is published. This function receives the event instance as its parameter.</param>
-        /// <returns>A disposable object that can be used to unsubscribe from the event. Once disposed, the handler will no longer be invoked for this event.</returns>
+        /// <typeparam name="TEvent">The type of event to subscribe to.</typeparam>
+        /// <param name="handler">The asynchronous handler function.</param>
+        /// <returns>A disposable subscription token to unsubscribe when disposed.</returns>
+        IDisposable Subscribe<TEvent>(Func<TEvent, CancellationToken, Task> handler) where TEvent : class;
+
+        /// <summary>
+        /// Subscribes to an event with a standard asynchronous handler.
+        /// </summary>
+        /// <typeparam name="TEvent">The type of event to subscribe to.</typeparam>
+        /// <param name="handler">The asynchronous handler function.</param>
+        /// <returns>A disposable subscription token to unsubscribe when disposed.</returns>
         IDisposable Subscribe<TEvent>(Func<TEvent, Task> handler) where TEvent : class;
     }
 }
