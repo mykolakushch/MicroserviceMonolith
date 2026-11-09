@@ -135,6 +135,8 @@ builder.ConfigureServices((context, services) =>
 var app = builder.Build();
 ```
 
+Modules are initialized when the host starts and shut down (in reverse order) when it stops, via a registered hosted service. Set `options.AutoManageModuleLifecycle = false` to manage `ModuleManager` yourself.
+
 ---
 
 ## Defining Modules and CQRS

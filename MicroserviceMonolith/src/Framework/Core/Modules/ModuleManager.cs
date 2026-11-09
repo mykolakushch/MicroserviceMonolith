@@ -15,6 +15,7 @@ namespace MicroserviceMonolith.Core.Modules
     public class ModuleManager
     {
         private readonly List<IModule> _modules = new();
+        private readonly HashSet<IModule> _initialized = new();
         private readonly object _lock = new();
 
         /// <summary>
@@ -106,6 +107,8 @@ namespace MicroserviceMonolith.Core.Modules
         /// <summary>
         /// Initializes all registered modules using the provided <see cref="IServiceProvider"/>.
         /// Also discovers any <see cref="IModule"/> registered inside the DI container.
+        /// Each module is initialized at most once until <see cref="ShutdownModulesAsync"/> runs, so calling this
+        /// method manually in addition to the automatic hosted service does not initialize modules twice.
         /// </summary>
         public async Task InitializeModulesAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken = default)
         {
@@ -121,13 +124,17 @@ namespace MicroserviceMonolith.Core.Modules
             List<IModule> modulesToInit;
             lock (_lock)
             {
-                modulesToInit = _modules.ToList();
+                modulesToInit = _modules.Where(m => !_initialized.Contains(m)).ToList();
             }
 
             foreach (var module in modulesToInit)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 await module.InitializeAsync(serviceProvider, cancellationToken);
+                lock (_lock)
+                {
+                    _initialized.Add(module);
+                }
             }
         }
 
@@ -162,6 +169,12 @@ namespace MicroserviceMonolith.Core.Modules
                 {
                     // Continue shutting down remaining modules even if one fails
                 }
+            }
+
+            lock (_lock)
+            {
+                // Allow modules to be initialized again after a full shutdown (e.g. host restart).
+                _initialized.Clear();
             }
         }
     }

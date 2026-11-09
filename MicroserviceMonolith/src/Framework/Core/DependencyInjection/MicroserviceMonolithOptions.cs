@@ -13,6 +13,12 @@ namespace MicroserviceMonolith.Core.DependencyInjection
     {
         public List<Assembly> AssembliesToScan { get; } = new();
         public bool EnableOutbox { get; set; } = true;
+
+        /// <summary>
+        /// When true (default), a hosted service initializes modules when the host starts and shuts them down when
+        /// it stops. Set to false if you call <c>ModuleManager.InitializeModulesAsync</c>/<c>ShutdownModulesAsync</c> yourself.
+        /// </summary>
+        public bool AutoManageModuleLifecycle { get; set; } = true;
         public IConfiguration Configuration { get; set; } = new ConfigurationBuilder().Build();
         public ExecutionQueueOptions ExecutionQueueOptions { get; set; } = new();
 

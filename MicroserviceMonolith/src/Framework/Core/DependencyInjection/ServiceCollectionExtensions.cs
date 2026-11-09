@@ -5,6 +5,7 @@ using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using MicroserviceMonolith.Core.Commands;
 using MicroserviceMonolith.Core.Common;
 using MicroserviceMonolith.Core.Context;
@@ -46,6 +47,12 @@ namespace MicroserviceMonolith.Core.DependencyInjection
 
             // Module Manager
             services.TryAddSingleton<ModuleManager>();
+
+            // Tie module initialization/shutdown to the host lifetime
+            if (options.AutoManageModuleLifecycle)
+            {
+                services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, ModuleLifecycleHostedService>());
+            }
 
             // Command Bus with correlation tracking
             services.TryAddSingleton<ICommandBus>(sp => new CommandBus(sp, sp.GetService<ICorrelationContextAccessor>()));
