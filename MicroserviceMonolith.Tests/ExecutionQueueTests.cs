@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using FluentAssertions;
 using MicroserviceMonolith.Core.Execution;
@@ -92,6 +93,105 @@ namespace MicroserviceMonolith.Tests
             var finished = await Task.WhenAny(tcs.Task, Task.Delay(3000));
             finished.Should().Be(tcs.Task);
             counter.Should().Be(6);
+        }
+
+        private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 2000)
+        {
+            var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+            while (!condition() && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(10);
+            }
+        }
+
+        [Fact]
+        public async Task Enqueue_WhenBoundedWaitQueueIsFull_ThrowsInsteadOfBufferingUnboundedly()
+        {
+            var options = new ExecutionQueueOptions { Capacity = 1, FullMode = BoundedChannelFullMode.Wait };
+            await using var queue = new ExecutionQueue(options);
+
+            var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var executed = new ConcurrentQueue<int>();
+
+            // Occupy the single worker so the next item stays in the channel buffer.
+            queue.Enqueue(async _ =>
+            {
+                started.TrySetResult(true);
+                await gate.Task;
+                executed.Enqueue(1);
+            });
+            (await Task.WhenAny(started.Task, Task.Delay(2000))).Should().Be(started.Task);
+
+            // Fills the single buffer slot.
+            queue.Enqueue(_ =>
+            {
+                executed.Enqueue(2);
+                return Task.CompletedTask;
+            });
+
+            // Queue is full: the item must be rejected, not silently scheduled elsewhere.
+            Action overflow = () => queue.Enqueue(_ =>
+            {
+                executed.Enqueue(3);
+                return Task.CompletedTask;
+            });
+            overflow.Should().Throw<InvalidOperationException>();
+
+            gate.TrySetResult(true);
+            await WaitUntilAsync(() => executed.Count >= 2);
+            await Task.Delay(100); // a wrongly buffered third item would have run by now
+
+            executed.ToArray().Should().Equal(1, 2);
+        }
+
+        [Fact]
+        public async Task EnqueueAsync_WhenBoundedWaitQueueIsFull_WaitsForCapacityAndPreservesOrder()
+        {
+            var options = new ExecutionQueueOptions { Capacity = 1, FullMode = BoundedChannelFullMode.Wait };
+            await using var queue = new ExecutionQueue(options);
+
+            var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var executed = new ConcurrentQueue<int>();
+
+            queue.Enqueue(async _ =>
+            {
+                started.TrySetResult(true);
+                await gate.Task;
+                executed.Enqueue(1);
+            });
+            (await Task.WhenAny(started.Task, Task.Delay(2000))).Should().Be(started.Task);
+
+            queue.Enqueue(_ =>
+            {
+                executed.Enqueue(2);
+                return Task.CompletedTask;
+            });
+
+            var pending = queue.EnqueueAsync(_ =>
+            {
+                executed.Enqueue(3);
+                return Task.CompletedTask;
+            });
+            pending.IsCompleted.Should().BeFalse(); // producer is held back by backpressure
+
+            gate.TrySetResult(true);
+            await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            await WaitUntilAsync(() => executed.Count >= 3);
+
+            executed.ToArray().Should().Equal(1, 2, 3);
+        }
+
+        [Fact]
+        public async Task Enqueue_AfterDispose_ThrowsObjectDisposedException()
+        {
+            var queue = new ExecutionQueue();
+            await queue.DisposeAsync();
+
+            Action act = () => queue.Enqueue(_ => Task.CompletedTask);
+
+            act.Should().Throw<ObjectDisposedException>();
         }
     }
 }

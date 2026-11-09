@@ -117,26 +117,37 @@ namespace MicroserviceMonolith.Core.Execution
         /// <summary>
         /// Enqueues a cancellation-aware task generator without blocking caller threads.
         /// </summary>
+        /// <remarks>
+        /// If the queue is bounded with <see cref="BoundedChannelFullMode.Wait"/> and is currently full, this method
+        /// does not buffer the item anywhere else: it throws <see cref="InvalidOperationException"/> so the caller sees
+        /// the backpressure. Use <see cref="EnqueueAsync"/> to wait for free capacity, or <see cref="TryEnqueue"/> to
+        /// handle a full queue without an exception. The drop modes never reject an item here.
+        /// </remarks>
+        /// <exception cref="InvalidOperationException">The queue is bounded, in Wait mode, and full.</exception>
+        /// <exception cref="ObjectDisposedException">The queue has been disposed.</exception>
         public void Enqueue(Func<CancellationToken, Task> taskGenerator)
         {
             if (taskGenerator == null) throw new ArgumentNullException(nameof(taskGenerator));
+
+            if (Volatile.Read(ref _isDisposed) != 0)
+            {
+                throw new ObjectDisposedException(nameof(ExecutionQueue));
+            }
 
             var wrappedTask = WrapWithCorrelation(taskGenerator);
 
             if (!_channel.Writer.TryWrite(wrappedTask))
             {
-                // Non-blocking asynchronous schedule when bounded channel is full (avoids thread pool starvation)
-                _ = Task.Run(async () =>
+                // The writer rejects an item only when the channel was completed (disposal raced with this call)
+                // or when it is bounded in Wait mode and full. Spawning a background writer per rejected item here
+                // would make the queue effectively unbounded and would break FIFO ordering, so report it instead.
+                if (Volatile.Read(ref _isDisposed) != 0)
                 {
-                    try
-                    {
-                        await _channel.Writer.WriteAsync(wrappedTask, _cts.Token).ConfigureAwait(false);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        _errorLogger?.Invoke("Failed to enqueue task into saturated queue", ex);
-                    }
-                }, _cts.Token);
+                    throw new ObjectDisposedException(nameof(ExecutionQueue));
+                }
+
+                throw new InvalidOperationException(
+                    "The execution queue is full. Use EnqueueAsync to wait for free capacity or TryEnqueue to handle a full queue.");
             }
         }
 
