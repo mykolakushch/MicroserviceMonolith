@@ -26,7 +26,7 @@ namespace MicroserviceMonolith.Core.Outbox
 
     /// <summary>
     /// Default processor for dispatching transactional outbox messages.
-    /// Uses delegate caching to eliminate runtime reflection lookups in the processing loop
+    /// Caches a typed publisher per event type (reflection runs once per event type, not per message)
     /// and restores ambient <see cref="CorrelationContext"/> for end-to-end tracing.
     /// </summary>
     public class OutboxProcessor : IOutboxProcessor
@@ -36,7 +36,21 @@ namespace MicroserviceMonolith.Core.Outbox
         private readonly ICorrelationContextAccessor? _correlationAccessor;
         private readonly Action<string>? _logAction;
 
-        private static readonly ConcurrentDictionary<Type, Func<IEventPublisher, object, CancellationToken, Task>> _publishDelegates = new();
+        private static readonly ConcurrentDictionary<Type, PublishInvoker> _publishInvokers = new();
+
+        /// <summary>
+        /// Publishes an event known only as <see cref="object"/> through the typed <see cref="IEventPublisher"/> API.
+        /// </summary>
+        private abstract class PublishInvoker
+        {
+            public abstract Task InvokeAsync(IEventPublisher publisher, object @event, CancellationToken ct);
+        }
+
+        private sealed class PublishInvoker<TEvent> : PublishInvoker where TEvent : class
+        {
+            public override Task InvokeAsync(IEventPublisher publisher, object @event, CancellationToken ct)
+                => publisher.PublishAsync((TEvent)@event, ct);
+        }
 
         public OutboxProcessor(IOutboxStore outboxStore, IEventPublisher eventPublisher, ILogger? logger = null)
             : this(outboxStore, eventPublisher, null, logger != null ? logger.Log : null)
@@ -78,18 +92,11 @@ namespace MicroserviceMonolith.Core.Outbox
                     var eventObj = message.Event;
                     var eventType = eventObj.GetType();
 
-                    // Retrieve cached dispatch delegate (zero reflection in hot path)
-                    var publishDelegate = _publishDelegates.GetOrAdd(eventType, t =>
-                    {
-                        var method = typeof(IEventPublisher)
-                            .GetMethods()
-                            .First(m => m.Name == nameof(IEventPublisher.PublishAsync) && m.GetParameters().Length == 2)
-                            .MakeGenericMethod(t);
+                    // Typed invoker is created once per event type (reflection), then called without reflection
+                    var publishInvoker = _publishInvokers.GetOrAdd(eventType, t =>
+                        (PublishInvoker)Activator.CreateInstance(typeof(PublishInvoker<>).MakeGenericType(t))!);
 
-                        return (pub, e, ct) => (Task)method.Invoke(pub, new object[] { e, ct })!;
-                    });
-
-                    await publishDelegate(_eventPublisher, eventObj, cancellationToken);
+                    await publishInvoker.InvokeAsync(_eventPublisher, eventObj, cancellationToken);
 
                     await _outboxStore.MarkAsProcessedAsync(message.Id, cancellationToken);
                     processedCount++;

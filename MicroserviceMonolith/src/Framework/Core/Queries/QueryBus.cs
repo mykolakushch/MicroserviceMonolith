@@ -12,7 +12,8 @@ namespace MicroserviceMonolith.Core.Queries
     /// <summary>
     /// In-memory query bus implementing dispatching of queries to their respective handlers.
     /// Supports manual registration as well as resolution via <see cref="IServiceProvider"/>.
-    /// Optimized with cached dispatch delegates to eliminate reflection overhead on hot paths.
+    /// Dispatch targets are cached per query type, so reflection runs only once per query type (when its cache
+    /// entry is created) and not on every call. Not trimming/Native AOT safe.
     /// </summary>
     public class QueryBus : IQueryBus
     {
@@ -144,25 +145,34 @@ namespace MicroserviceMonolith.Core.Queries
         }
 
         /// <summary>
-        /// Cached dispatch table for queries to avoid repeated reflection lookups on QueryAsync&lt;TResult&gt;.
+        /// Calls the typed <c>QueryAsync&lt;TQuery, TResult&gt;</c> for a query known only through <see cref="IQuery{TResult}"/>.
+        /// </summary>
+        private abstract class QueryInvokerBase<TResult>
+        {
+            public abstract Task<TResult> InvokeAsync(QueryBus bus, IQuery<TResult> query, CancellationToken ct);
+        }
+
+        private sealed class QueryInvoker<TQuery, TResult> : QueryInvokerBase<TResult> where TQuery : IQuery<TResult>
+        {
+            public override Task<TResult> InvokeAsync(QueryBus bus, IQuery<TResult> query, CancellationToken ct)
+                => bus.QueryAsync<TQuery, TResult>((TQuery)query, ct);
+        }
+
+        /// <summary>
+        /// Per-result-type cache of invokers keyed by the runtime query type. Reflection is used once per query
+        /// type to create the invoker; every later call is a plain virtual call.
         /// </summary>
         private static class QuerySenderCache<TResult>
         {
-            private static readonly ConcurrentDictionary<Type, Func<QueryBus, object, CancellationToken, Task<TResult>>> _invokers = new();
+            private static readonly ConcurrentDictionary<Type, QueryInvokerBase<TResult>> _invokers = new();
 
             public static Task<TResult> QueryAsync(QueryBus bus, IQuery<TResult> query, CancellationToken ct)
             {
                 var invoker = _invokers.GetOrAdd(query.GetType(), qType =>
-                {
-                    var method = typeof(QueryBus)
-                        .GetMethods()
-                        .First(m => m.Name == nameof(QueryBus.QueryAsync) && m.IsGenericMethod && m.GetGenericArguments().Length == 2)
-                        .MakeGenericMethod(qType, typeof(TResult));
+                    (QueryInvokerBase<TResult>)Activator.CreateInstance(
+                        typeof(QueryInvoker<,>).MakeGenericType(qType, typeof(TResult)))!);
 
-                    return (b, q, token) => (Task<TResult>)method.Invoke(b, new object[] { q, token })!;
-                });
-
-                return invoker(bus, query, ct);
+                return invoker.InvokeAsync(bus, query, ct);
             }
         }
     }

@@ -13,7 +13,9 @@ namespace MicroserviceMonolith.Core.Commands
     /// <summary>
     /// Thread-safe in-memory command bus facilitating centralized command dispatch.
     /// Supports manual handler/middleware registration as well as resolution from <see cref="IServiceProvider"/>.
-    /// Optimized for high throughput and Native AOT with zero reflection on the execution hot path.
+    /// Dispatch targets are cached per command type, so reflection runs only once per command type (when its cache
+    /// entry is created) and not on every call. The framework as a whole is not trimming/Native AOT safe:
+    /// that one-time cache creation and the assembly scanning rely on runtime reflection.
     /// </summary>
     public class CommandBus : ICommandBus
     {
@@ -142,7 +144,7 @@ namespace MicroserviceMonolith.Core.Commands
                 }
                 else if (sp != null)
                 {
-                    // Direct generic resolution without runtime reflection!
+                    // Direct generic resolution
                     var handler = sp.GetService<ICommandHandler<TCommand, TResult>>();
                     if (handler != null)
                     {
@@ -151,8 +153,9 @@ namespace MicroserviceMonolith.Core.Commands
                     else if (typeof(TResult) == typeof(Unit) && typeof(ICommand).IsAssignableFrom(typeof(TCommand)))
                     {
                         // Fallback when ICommandHandler<TCommand> was registered manually without Unit adapter.
-                        // Since ICommandHandler<TCommand> inherits ICommandHandler<TCommand, Unit>, cast directly with ZERO reflection!
-                        var voidHandler = sp.GetService(typeof(ICommandHandler<>).MakeGenericType(typeof(TCommand)));
+                        // Since ICommandHandler<TCommand> inherits ICommandHandler<TCommand, Unit>, cast directly.
+                        // The closed service type is computed once per command type, not on every call.
+                        var voidHandler = sp.GetService(VoidHandlerServiceType<TCommand>.Value);
                         if (voidHandler is ICommandHandler<TCommand, TResult> unitHandler)
                         {
                             handlerFunc = ct => unitHandler.HandleAsync(command, ct);
@@ -191,25 +194,43 @@ namespace MicroserviceMonolith.Core.Commands
         }
 
         /// <summary>
-        /// Cached dispatch table for commands to avoid repeated reflection lookups on SendAsync&lt;TResult&gt;.
+        /// Closed service type <c>ICommandHandler&lt;TCommand&gt;</c>, computed once per command type.
+        /// Only touched for commands that implement <see cref="ICommand"/>.
+        /// </summary>
+        private static class VoidHandlerServiceType<TCommand>
+        {
+            public static readonly Type Value = typeof(ICommandHandler<>).MakeGenericType(typeof(TCommand));
+        }
+
+        /// <summary>
+        /// Calls the typed <c>SendAsync&lt;TCommand, TResult&gt;</c> for a command known only through <see cref="ICommand{TResult}"/>.
+        /// </summary>
+        private abstract class CommandInvokerBase<TResult>
+        {
+            public abstract Task<TResult> InvokeAsync(CommandBus bus, ICommand<TResult> command, CancellationToken ct);
+        }
+
+        private sealed class CommandInvoker<TCommand, TResult> : CommandInvokerBase<TResult> where TCommand : ICommand<TResult>
+        {
+            public override Task<TResult> InvokeAsync(CommandBus bus, ICommand<TResult> command, CancellationToken ct)
+                => bus.SendAsync<TCommand, TResult>((TCommand)command, ct);
+        }
+
+        /// <summary>
+        /// Per-result-type cache of invokers keyed by the runtime command type. Reflection is used once per command
+        /// type to create the invoker; every later call is a plain virtual call (no MethodInfo.Invoke, no argument arrays).
         /// </summary>
         private static class CommandSenderCache<TResult>
         {
-            private static readonly ConcurrentDictionary<Type, Func<CommandBus, object, CancellationToken, Task<TResult>>> _invokers = new();
+            private static readonly ConcurrentDictionary<Type, CommandInvokerBase<TResult>> _invokers = new();
 
             public static Task<TResult> SendAsync(CommandBus bus, ICommand<TResult> command, CancellationToken ct)
             {
                 var invoker = _invokers.GetOrAdd(command.GetType(), cmdType =>
-                {
-                    var method = typeof(CommandBus)
-                        .GetMethods()
-                        .First(m => m.Name == nameof(CommandBus.SendAsync) && m.IsGenericMethod && m.GetGenericArguments().Length == 2)
-                        .MakeGenericMethod(cmdType, typeof(TResult));
+                    (CommandInvokerBase<TResult>)Activator.CreateInstance(
+                        typeof(CommandInvoker<,>).MakeGenericType(cmdType, typeof(TResult)))!);
 
-                    return (b, cmd, token) => (Task<TResult>)method.Invoke(b, new object[] { cmd, token })!;
-                });
-
-                return invoker(bus, command, ct);
+                return invoker.InvokeAsync(bus, command, ct);
             }
         }
     }
