@@ -2,9 +2,11 @@
 
 [![.NET](https://img.shields.io/badge/.NET-8.0%20%7C%209.0-purple.svg)](https://dotnet.microsoft.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-39%20Passed-brightgreen.svg)]()
+[![CI](https://github.com/mykolakushch/MicroserviceMonolith/actions/workflows/dotnet.yml/badge.svg)](https://github.com/mykolakushch/MicroserviceMonolith/actions/workflows/dotnet.yml)
 
-**MicroserviceMonolith** is a lightweight, production-grade .NET framework for architecting robust **Modular Monoliths**. It bridges the operational simplicity of a unified single-process application with the architectural benefits of microservices: extreme loose coupling, bounded contexts, CQRS, and event-driven communication.
+**MicroserviceMonolith** is a lightweight .NET framework for building **Modular Monoliths**. It combines the operational simplicity of a single-process application with messaging patterns borrowed from microservices: CQRS, in-process event-driven communication, and pipeline middlewares.
+
+> **Status:** early-stage. The in-memory components are reference implementations; see the notes in [Features](#features) for current limitations (e.g. the outbox is not durable, module boundaries are a convention and are not enforced by the framework).
 
 ---
 
@@ -31,7 +33,7 @@ flowchart TD
 
         subgraph Background ["Background Processing"]
             EQ["ExecutionQueue\n(Channels FIFO Queue)"]
-            OB["Transactional Outbox\n(OutboxStore & Processor)"]
+            OB["Outbox\n(in-memory reference store & processor)"]
         end
 
         subgraph Modules ["Encapsulated Business Modules"]
@@ -50,8 +52,8 @@ flowchart TD
     Pipelines --> M3
 
     M1 -.->|Publish Event| EB
-    M1 -.->|Save to Outbox| OB
-    OB -.->|Drains Events| EB
+    M1 -.->|"Save to Outbox (explicit call)"| OB
+    OB -.->|"ProcessBatchAsync (caller-driven)"| EB
     EB -.->|Enqueue Background Task| EQ
 ```
 
@@ -61,28 +63,31 @@ flowchart TD
 
 - **CQRS Architecture**:
   - **Command Bus**: Dispatches commands with or without return values (`ICommand`, `ICommand<TResult>`) to scoped handlers.
-  - **Query Bus**: Executes data queries (`IQuery<TResult>`) with strict read-only semantics.
+  - **Query Bus**: Executes data queries (`IQuery<TResult>`). Read-only behavior is a convention; the framework does not enforce it.
 - **Event Bus (Pub/Sub)**:
   - Loosely coupled in-memory event publishing (`IEventPublisher`, `IEventSubscriber`).
   - Supports multiple dispatch strategies: `Sequential` (with error isolation), `Parallel` (`Task.WhenAll`), and `Background`.
   - Thread-safe subscription registry with `IDisposable` tokens for clean unsubscription.
 - **Pipeline Middlewares (Interceptors)**:
   - Russian-doll middleware pipeline for Commands, Queries, and Events.
-  - Built-in interceptors:
-    - **Logging**: Structured logging using `Microsoft.Extensions.Logging`.
+  - Built-in interceptors (not registered automatically; add the ones you need to the buses or to DI):
+    - **Logging**: Logging through the framework `ILogger` abstraction (an adapter for `Microsoft.Extensions.Logging` is provided).
     - **Retry**: Resilient execution with configurable attempts, exponential backoff, and random jitter.
     - **Performance**: Execution timing with configurable latency warning thresholds.
     - **Error Handling**: Graceful error logging and exception propagation.
 - **Module Lifecycle Management**:
   - Encapsulate features in `IModule` implementations (`ConfigureServices`, `InitializeAsync`, `ShutdownAsync`).
-  - Ordered startup and reverse (LIFO) graceful shutdown.
+  - Startup in registration order and reverse (LIFO) shutdown. Order follows module discovery; there is no dependency resolution between modules yet.
   - Automatic assembly discovery with DI integration.
+  - Module boundaries are a convention: all handlers share one DI container and any module can send commands or queries to any other.
 - **Asynchronous Execution Queue**:
-  - High-throughput background worker queue powered by `System.Threading.Channels.Channel<T>`.
+  - Background worker queue powered by `System.Threading.Channels.Channel<T>`.
   - Supports bounded backpressure modes (`Wait`, `DropOldest`, `DropWrite`) and multi-worker concurrency.
-- **Transactional Outbox Pattern**:
-  - Reliable cross-module event dispatching with `IOutboxStore` and `IOutboxProcessor`.
-  - Built-in thread-safe in-memory store.
+- **Outbox Pattern (reference implementation)**:
+  - Event dispatching through `IOutboxStore` and `IOutboxProcessor`.
+  - The built-in store is in-memory and **not durable**: messages are lost on process exit and writes are not tied to your business transaction. For transactional guarantees, implement `IOutboxStore` over your database and save messages in the same transaction as your data.
+  - Nothing writes to the outbox or drives `ProcessBatchAsync` automatically; call them from your own code or a background loop.
+  - Delivery is at-least-once: subscribers must be idempotent.
 - **User Actions Adapter**:
   - Adapter module converting external UI/API triggers into domain events and commands.
 
@@ -94,12 +99,12 @@ Add the package to your .NET project:
 
 ```sh
 # Using .NET CLI
-dotnet add package MicroserviceMonolith --version 1.0.0
+dotnet add package MicroserviceMonolith
 ```
 
 ```sh
 # Using Package Manager Console
-Install-Package MicroserviceMonolith -Version 1.0.0
+Install-Package MicroserviceMonolith
 ```
 
 ---

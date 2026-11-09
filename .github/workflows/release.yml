@@ -33,6 +33,15 @@ jobs:
             8.0.x
             9.0.x
 
+      - name: Verify tag matches package version
+        if: github.ref_type == 'tag'
+        run: |
+          VERSION=$(grep -oP '(?<=<Version>)[^<]+' MicroserviceMonolith/MicroserviceMonolith.csproj | head -1)
+          if [ "${GITHUB_REF_NAME#v}" != "$VERSION" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match <Version>${VERSION}</Version> in MicroserviceMonolith.csproj"
+            exit 1
+          fi
+
       - name: Restore dependencies
         run: dotnet restore
 
@@ -51,7 +60,8 @@ jobs:
           mkdir -p ./artifacts/binaries/net8.0 ./artifacts/binaries/net9.0
           cp -r MicroserviceMonolith/bin/Release/net8.0/* ./artifacts/binaries/net8.0/
           cp -r MicroserviceMonolith/bin/Release/net9.0/* ./artifacts/binaries/net9.0/
-          cd ./artifacts && zip -r MicroserviceMonolith-v1.0.0-binaries.zip binaries
+          VERSION=$(grep -oP '(?<=<Version>)[^<]+' MicroserviceMonolith/MicroserviceMonolith.csproj | head -1)
+          cd ./artifacts && zip -r "MicroserviceMonolith-v${VERSION}-binaries.zip" binaries
 
       - name: Publish to GitHub Packages
         run: |
@@ -68,7 +78,7 @@ jobs:
           files: |
             ./artifacts/*.nupkg
             ./artifacts/*.snupkg
-            ./artifacts/MicroserviceMonolith-v1.0.0-binaries.zip
+            ./artifacts/MicroserviceMonolith-v*-binaries.zip
 
       - name: NuGet Login (OIDC Trusted Publishing)
         uses: NuGet/login@v1
