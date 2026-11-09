@@ -1,10 +1,15 @@
-name: Release & Publish
+name: "Release and Publish"
 
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      nuget_username:
+        description: 'NuGet.org profile username'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -13,6 +18,7 @@ permissions:
 
 jobs:
   release:
+    name: "Build, Test, Pack and Publish"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -33,7 +39,7 @@ jobs:
       - name: Build in Release mode
         run: dotnet build --configuration Release --no-restore
 
-      - name: Run unit & integration tests
+      - name: Run unit and integration tests
         run: dotnet test --configuration Release --no-build --verbosity normal
 
       - name: Pack NuGet package
@@ -56,16 +62,14 @@ jobs:
       - name: NuGet Login (OIDC Trusted Publishing)
         uses: NuGet/login@v1
         id: nuget-login
-        continue-on-error: true
         with:
-          user: ${{ vars.NUGET_USERNAME || github.repository_owner }}
+          user: ${{ inputs.nuget_username || vars.NUGET_USERNAME || github.repository_owner }}
 
       - name: Publish to NuGet.org
-        if: steps.nuget-login.outputs.NUGET_API_KEY != '' || secrets.NUGET_API_KEY != ''
         run: |
           dotnet nuget push ./artifacts/*.nupkg \
             --source "https://api.nuget.org/v3/index.json" \
-            --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY || secrets.NUGET_API_KEY }}" \
+            --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
             --skip-duplicate
 
       - name: Create GitHub Release
