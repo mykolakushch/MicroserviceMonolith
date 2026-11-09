@@ -150,18 +150,12 @@ namespace MicroserviceMonolith.Core.Commands
                     }
                     else if (typeof(TResult) == typeof(Unit) && typeof(ICommand).IsAssignableFrom(typeof(TCommand)))
                     {
-                        // Fallback when ICommandHandler<TCommand> was registered manually without Unit adapter
-                        var voidHandlerType = typeof(ICommandHandler<>).MakeGenericType(typeof(TCommand));
-                        var voidHandler = sp.GetService(voidHandlerType);
-                        if (voidHandler != null)
+                        // Fallback when ICommandHandler<TCommand> was registered manually without Unit adapter.
+                        // Since ICommandHandler<TCommand> inherits ICommandHandler<TCommand, Unit>, cast directly with ZERO reflection!
+                        var voidHandler = sp.GetService(typeof(ICommandHandler<>).MakeGenericType(typeof(TCommand)));
+                        if (voidHandler is ICommandHandler<TCommand, TResult> unitHandler)
                         {
-                            var method = voidHandlerType.GetMethod(nameof(ICommandHandler<ICommand>.HandleAsync))!;
-                            handlerFunc = async ct =>
-                            {
-                                var task = (Task)method.Invoke(voidHandler, new object[] { command, ct })!;
-                                await task;
-                                return (TResult)(object)Unit.Value;
-                            };
+                            handlerFunc = ct => unitHandler.HandleAsync(command, ct);
                         }
                         else
                         {

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -225,6 +226,37 @@ namespace MicroserviceMonolith.Tests
             var unitHandler = handler as ICommandHandler<InternalTestCommand, Unit>;
 
             unitHandler.Should().NotBeNull();
+        }
+
+        // =========================================================================
+        // 6. Factory Registrations Not Duplicated by Assembly Scanner
+        // =========================================================================
+        public record FactoryTestCommand(string Name) : ICommand;
+
+        public class FactoryTestCommandHandler : ICommandHandler<FactoryTestCommand>
+        {
+            public Task HandleAsync(FactoryTestCommand command, CancellationToken cancellationToken = default)
+            {
+                return Task.CompletedTask;
+            }
+        }
+
+        [Fact]
+        public void FactoryRegisteredHandler_NotDuplicatedByAssemblyScanner()
+        {
+            var services = new ServiceCollection();
+
+            // Module registers handler via factory (ImplementationType == null)
+            services.AddTransient<ICommandHandler<FactoryTestCommand>>(sp => new FactoryTestCommandHandler());
+
+            services.AddMicroserviceMonolith(options =>
+            {
+                options.RegisterServicesFromAssemblies(typeof(ProductionHardeningTests).Assembly);
+            });
+
+            // Must have exactly 1 registration for FactoryTestCommand
+            var handlers = services.Where(s => s.ServiceType == typeof(ICommandHandler<FactoryTestCommand>)).ToList();
+            handlers.Should().ContainSingle();
         }
     }
 }

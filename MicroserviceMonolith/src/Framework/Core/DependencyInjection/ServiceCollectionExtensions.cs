@@ -92,7 +92,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                         .Select(s => s.ImplementationType ?? s.ImplementationInstance?.GetType())
                         .Where(t => t != null)!);
 
-            // Phase 1: Discover and configure all modules first so their custom services are registered
+            // Phase 1: Discover and configure all modules first so their custom services (including factories) are registered
             foreach (var type in allTypes.Where(t => typeof(IModule).IsAssignableFrom(t) && t.GetConstructor(Type.EmptyTypes) != null))
             {
                 if (registeredModuleTypes.Add(type))
@@ -106,7 +106,16 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                 }
             }
 
-            // Phase 2: Index all descriptors (including those added by modules in ConfigureServices) in O(1) set
+            // Phase 2: Index all already-registered single-handler interfaces (from factory, instance, or type) in O(1) set
+            var registeredSingleHandlerTypes = new HashSet<Type>(
+                services.Where(s =>
+                    s.ServiceType.IsGenericType &&
+                    (s.ServiceType.GetGenericTypeDefinition() == typeof(ICommandHandler<>) ||
+                     s.ServiceType.GetGenericTypeDefinition() == typeof(ICommandHandler<,>) ||
+                     s.ServiceType.GetGenericTypeDefinition() == typeof(IQueryHandler<,>)))
+                    .Select(s => s.ServiceType));
+
+            // Index (ServiceType, ImplementationType) pairs to prevent duplicate event handler registrations
             var registeredDescriptors = new HashSet<(Type ServiceType, Type ImplementationType)>(
                 services.Where(s => s.ImplementationType != null)
                         .Select(s => (s.ServiceType, s.ImplementationType!)));
@@ -117,24 +126,24 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                 // Register ICommandHandler<TCommand> and ICommandHandler<TCommand, Unit>
                 foreach (var iface in type.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(ICommandHandler<>)))
                 {
-                    if (registeredDescriptors.Add((iface, type)))
+                    if (registeredSingleHandlerTypes.Add(iface) && registeredDescriptors.Add((iface, type)))
                     {
                         services.AddTransient(iface, type);
-                    }
 
-                    // Register zero-reflection Unit handler
-                    var cmdType = iface.GetGenericArguments()[0];
-                    var unitHandlerType = typeof(ICommandHandler<,>).MakeGenericType(cmdType, typeof(Unit));
-                    if (registeredDescriptors.Add((unitHandlerType, type)))
-                    {
-                        services.AddTransient(unitHandlerType, type);
+                        // Register zero-reflection Unit handler
+                        var cmdType = iface.GetGenericArguments()[0];
+                        var unitHandlerType = typeof(ICommandHandler<,>).MakeGenericType(cmdType, typeof(Unit));
+                        if (registeredSingleHandlerTypes.Add(unitHandlerType) && registeredDescriptors.Add((unitHandlerType, type)))
+                        {
+                            services.AddTransient(unitHandlerType, type);
+                        }
                     }
                 }
 
                 // Register ICommandHandler<TCommand, TResult>
                 foreach (var iface in type.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(ICommandHandler<,>)))
                 {
-                    if (registeredDescriptors.Add((iface, type)))
+                    if (registeredSingleHandlerTypes.Add(iface) && registeredDescriptors.Add((iface, type)))
                     {
                         services.AddTransient(iface, type);
                     }
@@ -143,7 +152,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                 // Register IQueryHandler<TQuery, TResult>
                 foreach (var iface in type.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IQueryHandler<,>)))
                 {
-                    if (registeredDescriptors.Add((iface, type)))
+                    if (registeredSingleHandlerTypes.Add(iface) && registeredDescriptors.Add((iface, type)))
                     {
                         services.AddTransient(iface, type);
                     }
