@@ -16,6 +16,13 @@ namespace MicroserviceMonolith.Core.Events
     /// pipeline middlewares, sequential or parallel dispatch, and Dependency Injection resolution.
     /// Separates event publication pipeline from individual handler pipelines to preserve subscriber idempotency.
     /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item><description>Dispatch is by the static type <c>TEvent</c> given to <c>PublishAsync</c>: handlers of a base class or interface are not invoked for a derived event.</description></item>
+    /// <item><description>With <see cref="EventPublishStrategy.Parallel"/> all handlers of one publication share a single DI scope. Scoped services (such as a DbContext) are not thread-safe, so handlers that run concurrently must not share them unsafely.</description></item>
+    /// <item><description>With <see cref="EventPublishStrategy.Sequential"/> and <see cref="EventPublishStrategy.Parallel"/> every handler runs even if another fails; one failure is rethrown as is, several as an <see cref="AggregateException"/>.</description></item>
+    /// </list>
+    /// </remarks>
     public class EventBus : IEventPublisher, IEventSubscriber
     {
         private readonly IServiceProvider? _serviceProvider;
@@ -234,8 +241,46 @@ namespace MicroserviceMonolith.Core.Events
 
                     if (strategy == EventPublishStrategy.Parallel)
                     {
-                        var tasks = decoratedHandlers.Select(h => h(cancellationToken));
-                        await Task.WhenAll(tasks);
+                        // Every handler is started even if another one throws synchronously, and every failure is reported.
+                        var tasks = decoratedHandlers
+                            .Select(h => InvokeIsolatedAsync(h, cancellationToken))
+                            .ToList();
+
+                        try
+                        {
+                            await Task.WhenAll(tasks);
+                        }
+                        catch
+                        {
+                            // Failures are collected from the individual tasks below.
+                        }
+
+                        var failures = new List<Exception>();
+                        var cancelled = false;
+                        foreach (var task in tasks)
+                        {
+                            if (task.IsFaulted)
+                            {
+                                failures.AddRange(task.Exception!.InnerExceptions);
+                            }
+                            else if (task.IsCanceled)
+                            {
+                                cancelled = true;
+                            }
+                        }
+
+                        if (failures.Count == 1)
+                        {
+                            throw failures[0];
+                        }
+                        if (failures.Count > 1)
+                        {
+                            throw new AggregateException($"Multiple exceptions occurred while publishing event '{typeof(TEvent).Name}'.", failures);
+                        }
+                        if (cancelled)
+                        {
+                            throw new OperationCanceledException(cancellationToken);
+                        }
                     }
                     else
                     {
@@ -280,6 +325,14 @@ namespace MicroserviceMonolith.Core.Events
             {
                 scope?.Dispose();
             }
+        }
+
+        /// <summary>
+        /// Runs a handler so that a synchronous throw becomes a faulted task instead of escaping to the caller.
+        /// </summary>
+        private static async Task InvokeIsolatedAsync(Func<CancellationToken, Task> handler, CancellationToken cancellationToken)
+        {
+            await handler(cancellationToken).ConfigureAwait(false);
         }
 
         /// <inheritdoc />
