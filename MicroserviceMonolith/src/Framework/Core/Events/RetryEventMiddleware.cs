@@ -6,9 +6,11 @@ using MicroserviceMonolith.Core.Logging;
 namespace MicroserviceMonolith.Core.Events
 {
     /// <summary>
-    /// Middleware that retries event publishing upon failure with exponential backoff and jitter.
+    /// Middleware that retries event handler execution upon failure with exponential backoff and jitter.
+    /// Implements <see cref="IEventHandlerMiddleware"/> to retry individual subscribers without re-executing
+    /// previously succeeded subscribers (preserving idempotency).
     /// </summary>
-    public class RetryEventMiddleware : IEventMiddleware
+    public class RetryEventMiddleware : IEventHandlerMiddleware, IEventMiddleware
     {
         private readonly int _maxRetries;
         private readonly TimeSpan _initialDelay;
@@ -16,7 +18,6 @@ namespace MicroserviceMonolith.Core.Events
         private readonly bool _useJitter;
         private readonly Func<Exception, bool>? _shouldRetry;
         private readonly Action<string> _logAction;
-        private readonly Random _random = new();
 
         public RetryEventMiddleware(int maxRetries, ILogger logger)
             : this(maxRetries, TimeSpan.FromMilliseconds(50), 2.0, true, null, logger.Log)
@@ -68,7 +69,7 @@ namespace MicroserviceMonolith.Core.Events
                         var delayMs = currentDelay.TotalMilliseconds;
                         if (_useJitter)
                         {
-                            delayMs += _random.Next(0, (int)Math.Max(1, delayMs * 0.5));
+                            delayMs += Random.Shared.Next(0, (int)Math.Max(1, delayMs * 0.5));
                         }
                         await Task.Delay(TimeSpan.FromMilliseconds(delayMs), cancellationToken);
                         currentDelay = TimeSpan.FromMilliseconds(currentDelay.TotalMilliseconds * _backoffMultiplier);

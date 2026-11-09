@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Microsoft.Extensions.Configuration;
 using MicroserviceMonolith.Core.Execution;
 
 namespace MicroserviceMonolith.Core.DependencyInjection
@@ -12,7 +13,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
     {
         public List<Assembly> AssembliesToScan { get; } = new();
         public bool EnableOutbox { get; set; } = true;
-        public Microsoft.Extensions.Configuration.IConfiguration? Configuration { get; set; }
+        public IConfiguration Configuration { get; set; } = new ConfigurationBuilder().Build();
         public ExecutionQueueOptions ExecutionQueueOptions { get; set; } = new();
 
         /// <summary>

@@ -1,9 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using MicroserviceMonolith.Core.Commands;
+using MicroserviceMonolith.Core.Common;
 using MicroserviceMonolith.Core.Context;
 using MicroserviceMonolith.Core.Events;
 using MicroserviceMonolith.Core.Execution;
@@ -35,17 +38,20 @@ namespace MicroserviceMonolith.Core.DependencyInjection
             // Context Accessor
             services.TryAddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
 
-            // Execution Queue
-            services.TryAddSingleton(sp => new ExecutionQueue(options.ExecutionQueueOptions));
+            // Execution Queue with correlation tracking
+            services.TryAddSingleton(sp => new ExecutionQueue(
+                options.ExecutionQueueOptions,
+                sp.GetService<ICorrelationContextAccessor>(),
+                (msg, ex) => sp.GetService<ILogger>()?.Log($"[ExecutionQueue] {msg}: {ex.Message}")));
 
             // Module Manager
             services.TryAddSingleton<ModuleManager>();
 
-            // Command Bus
-            services.TryAddSingleton<ICommandBus>(sp => new CommandBus(sp));
+            // Command Bus with correlation tracking
+            services.TryAddSingleton<ICommandBus>(sp => new CommandBus(sp, sp.GetService<ICorrelationContextAccessor>()));
 
-            // Query Bus
-            services.TryAddSingleton<IQueryBus>(sp => new QueryBus(sp));
+            // Query Bus with correlation tracking
+            services.TryAddSingleton<IQueryBus>(sp => new QueryBus(sp, sp.GetService<ICorrelationContextAccessor>()));
 
             // Event Bus
             services.TryAddSingleton<EventBus>(sp => new EventBus(sp));
@@ -56,7 +62,11 @@ namespace MicroserviceMonolith.Core.DependencyInjection
             if (options.EnableOutbox)
             {
                 services.TryAddSingleton<IOutboxStore, InMemoryOutboxStore>();
-                services.TryAddSingleton<IOutboxProcessor, OutboxProcessor>();
+                services.TryAddSingleton<IOutboxProcessor>(sp => new OutboxProcessor(
+                    sp.GetRequiredService<IOutboxStore>(),
+                    sp.GetRequiredService<IEventPublisher>(),
+                    sp.GetService<ICorrelationContextAccessor>(),
+                    sp.GetService<ILogger>() != null ? sp.GetRequiredService<ILogger>().Log : null));
             }
 
             // Assembly scanning for handlers and modules
@@ -70,28 +80,61 @@ namespace MicroserviceMonolith.Core.DependencyInjection
 
         private static void ScanAssemblies(
             IServiceCollection services,
-            System.Collections.Generic.IEnumerable<Assembly> assemblies,
-            Microsoft.Extensions.Configuration.IConfiguration? configuration)
+            IEnumerable<Assembly> assemblies,
+            IConfiguration configuration)
         {
             var allTypes = assemblies.SelectMany(a => a.GetTypes())
-                .Where(t => t.IsClass && !t.IsAbstract && !t.IsInterface && (t.IsPublic || t.IsNestedPublic))
+                .Where(t => t.IsClass && !t.IsAbstract && !t.IsInterface)
                 .ToList();
 
+            var registeredModuleTypes = new HashSet<Type>(
+                services.Where(s => s.ServiceType == typeof(IModule))
+                        .Select(s => s.ImplementationType ?? s.ImplementationInstance?.GetType())
+                        .Where(t => t != null)!);
+
+            // Phase 1: Discover and configure all modules first so their custom services are registered
+            foreach (var type in allTypes.Where(t => typeof(IModule).IsAssignableFrom(t) && t.GetConstructor(Type.EmptyTypes) != null))
+            {
+                if (registeredModuleTypes.Add(type))
+                {
+                    var moduleInstance = (IModule?)Activator.CreateInstance(type);
+                    if (moduleInstance != null)
+                    {
+                        services.AddSingleton(typeof(IModule), moduleInstance);
+                        moduleInstance.ConfigureServices(services, configuration);
+                    }
+                }
+            }
+
+            // Phase 2: Index all descriptors (including those added by modules in ConfigureServices) in O(1) set
+            var registeredDescriptors = new HashSet<(Type ServiceType, Type ImplementationType)>(
+                services.Where(s => s.ImplementationType != null)
+                        .Select(s => (s.ServiceType, s.ImplementationType!)));
+
+            // Phase 3: Auto-scan remaining handlers without duplicate registrations
             foreach (var type in allTypes)
             {
-                // Register ICommandHandler<TCommand>
+                // Register ICommandHandler<TCommand> and ICommandHandler<TCommand, Unit>
                 foreach (var iface in type.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(ICommandHandler<>)))
                 {
-                    if (!services.Any(s => s.ServiceType == iface && s.ImplementationType == type))
+                    if (registeredDescriptors.Add((iface, type)))
                     {
                         services.AddTransient(iface, type);
+                    }
+
+                    // Register zero-reflection Unit handler
+                    var cmdType = iface.GetGenericArguments()[0];
+                    var unitHandlerType = typeof(ICommandHandler<,>).MakeGenericType(cmdType, typeof(Unit));
+                    if (registeredDescriptors.Add((unitHandlerType, type)))
+                    {
+                        services.AddTransient(unitHandlerType, type);
                     }
                 }
 
                 // Register ICommandHandler<TCommand, TResult>
                 foreach (var iface in type.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(ICommandHandler<,>)))
                 {
-                    if (!services.Any(s => s.ServiceType == iface && s.ImplementationType == type))
+                    if (registeredDescriptors.Add((iface, type)))
                     {
                         services.AddTransient(iface, type);
                     }
@@ -100,7 +143,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                 // Register IQueryHandler<TQuery, TResult>
                 foreach (var iface in type.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IQueryHandler<,>)))
                 {
-                    if (!services.Any(s => s.ServiceType == iface && s.ImplementationType == type))
+                    if (registeredDescriptors.Add((iface, type)))
                     {
                         services.AddTransient(iface, type);
                     }
@@ -109,33 +152,9 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                 // Register IEventHandler<TEvent>
                 foreach (var iface in type.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEventHandler<>)))
                 {
-                    if (!services.Any(s => s.ServiceType == iface && s.ImplementationType == type))
+                    if (registeredDescriptors.Add((iface, type)))
                     {
                         services.AddTransient(iface, type);
-                    }
-                }
-
-                // Register IModule
-                if (typeof(IModule).IsAssignableFrom(type))
-                {
-                    if (!services.Any(s => s.ServiceType == typeof(IModule) && (s.ImplementationType == type || s.ImplementationInstance?.GetType() == type)))
-                    {
-                        if (type.GetConstructor(Type.EmptyTypes) != null)
-                        {
-                            var moduleInstance = (IModule?)Activator.CreateInstance(type);
-                            if (moduleInstance != null)
-                            {
-                                services.AddSingleton(typeof(IModule), moduleInstance);
-                                if (configuration != null)
-                                {
-                                    moduleInstance.ConfigureServices(services, configuration);
-                                }
-                            }
-                        }
-                        else
-                        {
-                            services.AddSingleton(typeof(IModule), type);
-                        }
                     }
                 }
             }

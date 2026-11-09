@@ -16,7 +16,6 @@ namespace MicroserviceMonolith.Core.Queries
         private readonly bool _useJitter;
         private readonly Func<Exception, bool>? _shouldRetry;
         private readonly Action<string> _logAction;
-        private readonly Random _random = new();
 
         public RetryQueryMiddleware(int maxRetries, ILogger logger)
             : this(maxRetries, TimeSpan.FromMilliseconds(50), 2.0, true, null, logger.Log)
@@ -67,7 +66,7 @@ namespace MicroserviceMonolith.Core.Queries
                         var delayMs = currentDelay.TotalMilliseconds;
                         if (_useJitter)
                         {
-                            delayMs += _random.Next(0, (int)Math.Max(1, delayMs * 0.5));
+                            delayMs += Random.Shared.Next(0, (int)Math.Max(1, delayMs * 0.5));
                         }
                         await Task.Delay(TimeSpan.FromMilliseconds(delayMs), cancellationToken);
                         currentDelay = TimeSpan.FromMilliseconds(currentDelay.TotalMilliseconds * _backoffMultiplier);

@@ -1,41 +1,39 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using MicroserviceMonolith.Core.Context;
 using MicroserviceMonolith.Core.Logging;
 
 namespace MicroserviceMonolith.Core.Commands
 {
     /// <summary>
-    /// Command middleware that logs command execution start, completion, and failure.
+    /// Command middleware that logs command execution start, completion, and failure with ambient correlation tracking.
     /// </summary>
     public class LoggingCommandMiddleware : ICommandMiddleware
     {
         private readonly Action<string> _logAction;
+        private readonly ICorrelationContextAccessor? _correlationAccessor;
 
-        /// <summary>
-        /// Initializes a new instance of <see cref="LoggingCommandMiddleware"/> with an <see cref="ILogger"/>.
-        /// </summary>
-        public LoggingCommandMiddleware(ILogger logger)
+        public LoggingCommandMiddleware(ILogger logger, ICorrelationContextAccessor? correlationAccessor = null)
         {
             if (logger == null) throw new ArgumentNullException(nameof(logger));
             _logAction = logger.Log;
+            _correlationAccessor = correlationAccessor;
         }
 
-        /// <summary>
-        /// Initializes a new instance of <see cref="LoggingCommandMiddleware"/> with a standard Microsoft logger.
-        /// </summary>
-        public LoggingCommandMiddleware(Microsoft.Extensions.Logging.ILogger<LoggingCommandMiddleware> logger)
+        public LoggingCommandMiddleware(
+            Microsoft.Extensions.Logging.ILogger<LoggingCommandMiddleware> logger,
+            ICorrelationContextAccessor? correlationAccessor = null)
         {
             if (logger == null) throw new ArgumentNullException(nameof(logger));
             _logAction = msg => Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(logger, "{Message}", msg);
+            _correlationAccessor = correlationAccessor;
         }
 
-        /// <summary>
-        /// Initializes a new instance with a custom log delegate.
-        /// </summary>
-        public LoggingCommandMiddleware(Action<string> logAction)
+        public LoggingCommandMiddleware(Action<string> logAction, ICorrelationContextAccessor? correlationAccessor = null)
         {
             _logAction = logAction ?? throw new ArgumentNullException(nameof(logAction));
+            _correlationAccessor = correlationAccessor;
         }
 
         /// <inheritdoc />
@@ -46,16 +44,19 @@ namespace MicroserviceMonolith.Core.Commands
             where TCommand : ICommand<TResult>
         {
             var commandName = command.GetType().Name;
-            _logAction($"[Command] Start {commandName}");
+            var cid = _correlationAccessor?.CorrelationContext?.CorrelationId;
+            var prefix = !string.IsNullOrWhiteSpace(cid) ? $"[CID: {cid}] " : string.Empty;
+
+            _logAction($"{prefix}[Command] Start {commandName}");
             try
             {
                 var result = await next();
-                _logAction($"[Command] End {commandName}");
+                _logAction($"{prefix}[Command] End {commandName}");
                 return result;
             }
             catch (Exception ex)
             {
-                _logAction($"[Command] Failed {commandName}: {ex.Message}");
+                _logAction($"{prefix}[Command] Failed {commandName}: {ex.Message}");
                 throw;
             }
         }

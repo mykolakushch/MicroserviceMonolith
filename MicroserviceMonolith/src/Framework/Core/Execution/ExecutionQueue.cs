@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using MicroserviceMonolith.Core.Context;
 using MicroserviceMonolith.Core.Logging;
 
 namespace MicroserviceMonolith.Core.Execution
@@ -23,12 +24,14 @@ namespace MicroserviceMonolith.Core.Execution
     /// <summary>
     /// High-performance asynchronous background execution queue backed by <see cref="Channel{T}"/>.
     /// Supports bounded backpressure, concurrent workers, graceful draining, cancellation, and error notifications.
+    /// Captures and restores ambient <see cref="CorrelationContext"/> across asynchronous boundaries.
     /// </summary>
     public class ExecutionQueue : IDisposable, IAsyncDisposable
     {
         private readonly Channel<Func<CancellationToken, Task>> _channel;
         private readonly CancellationTokenSource _cts = new();
         private readonly List<Task> _workers = new();
+        private readonly ICorrelationContextAccessor? _correlationAccessor;
         private readonly Action<string, Exception>? _errorLogger;
         private readonly TimeSpan _drainTimeout;
         private int _isDisposed;
@@ -41,7 +44,7 @@ namespace MicroserviceMonolith.Core.Execution
         /// <summary>
         /// Initializes a new instance of <see cref="ExecutionQueue"/> with default options.
         /// </summary>
-        public ExecutionQueue() : this(new ExecutionQueueOptions(), (Action<string, Exception>?)null)
+        public ExecutionQueue() : this(new ExecutionQueueOptions(), null, null)
         {
         }
 
@@ -49,18 +52,30 @@ namespace MicroserviceMonolith.Core.Execution
         /// Initializes a new instance of <see cref="ExecutionQueue"/> with an optional logger.
         /// </summary>
         public ExecutionQueue(ILogger? logger)
-            : this(new ExecutionQueueOptions(), logger != null ? (msg, ex) => logger.Log($"[ExecutionQueue] {msg}: {ex.Message}") : null)
+            : this(new ExecutionQueueOptions(), null, logger != null ? (msg, ex) => logger.Log($"[ExecutionQueue] {msg}: {ex.Message}") : null)
         {
         }
 
         /// <summary>
-        /// Initializes a new instance of <see cref="ExecutionQueue"/> with full options and error logging.
+        /// Initializes a new instance with options and optional logger.
         /// </summary>
         public ExecutionQueue(ExecutionQueueOptions options, Action<string, Exception>? errorLogger = null)
+            : this(options, null, errorLogger)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of <see cref="ExecutionQueue"/> with full options, correlation context accessor, and error logging.
+        /// </summary>
+        public ExecutionQueue(
+            ExecutionQueueOptions options,
+            ICorrelationContextAccessor? correlationAccessor,
+            Action<string, Exception>? errorLogger = null)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
             if (options.WorkerCount <= 0) throw new ArgumentOutOfRangeException(nameof(options.WorkerCount), "Worker count must be greater than 0.");
 
+            _correlationAccessor = correlationAccessor;
             _errorLogger = errorLogger;
             _drainTimeout = options.DrainTimeout;
 
@@ -100,19 +115,28 @@ namespace MicroserviceMonolith.Core.Execution
         }
 
         /// <summary>
-        /// Enqueues a cancellation-aware task generator.
+        /// Enqueues a cancellation-aware task generator without blocking caller threads.
         /// </summary>
         public void Enqueue(Func<CancellationToken, Task> taskGenerator)
         {
             if (taskGenerator == null) throw new ArgumentNullException(nameof(taskGenerator));
-            if (!_channel.Writer.TryWrite(taskGenerator))
+
+            var wrappedTask = WrapWithCorrelation(taskGenerator);
+
+            if (!_channel.Writer.TryWrite(wrappedTask))
             {
-                // Fallback to synchronous blocking wait if channel is bounded and full
-                ValueTask task = _channel.Writer.WriteAsync(taskGenerator, _cts.Token);
-                if (!task.IsCompletedSuccessfully)
+                // Non-blocking asynchronous schedule when bounded channel is full (avoids thread pool starvation)
+                _ = Task.Run(async () =>
                 {
-                    task.AsTask().GetAwaiter().GetResult();
-                }
+                    try
+                    {
+                        await _channel.Writer.WriteAsync(wrappedTask, _cts.Token).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _errorLogger?.Invoke("Failed to enqueue task into saturated queue", ex);
+                    }
+                }, _cts.Token);
             }
         }
 
@@ -122,7 +146,7 @@ namespace MicroserviceMonolith.Core.Execution
         public ValueTask EnqueueAsync(Func<CancellationToken, Task> taskGenerator, CancellationToken cancellationToken = default)
         {
             if (taskGenerator == null) throw new ArgumentNullException(nameof(taskGenerator));
-            return _channel.Writer.WriteAsync(taskGenerator, cancellationToken);
+            return _channel.Writer.WriteAsync(WrapWithCorrelation(taskGenerator), cancellationToken);
         }
 
         /// <summary>
@@ -131,7 +155,25 @@ namespace MicroserviceMonolith.Core.Execution
         public bool TryEnqueue(Func<CancellationToken, Task> taskGenerator)
         {
             if (taskGenerator == null) throw new ArgumentNullException(nameof(taskGenerator));
-            return _channel.Writer.TryWrite(taskGenerator);
+            return _channel.Writer.TryWrite(WrapWithCorrelation(taskGenerator));
+        }
+
+        private Func<CancellationToken, Task> WrapWithCorrelation(Func<CancellationToken, Task> taskGenerator)
+        {
+            var ambientContext = _correlationAccessor?.CorrelationContext;
+            if (ambientContext == null)
+            {
+                return taskGenerator;
+            }
+
+            return async ct =>
+            {
+                if (_correlationAccessor != null)
+                {
+                    _correlationAccessor.CorrelationContext = ambientContext;
+                }
+                await taskGenerator(ct);
+            };
         }
 
         private async Task ProcessQueueAsync()

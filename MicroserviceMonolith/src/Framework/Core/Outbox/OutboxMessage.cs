@@ -14,7 +14,10 @@ namespace MicroserviceMonolith.Core.Outbox
         public DateTimeOffset? ProcessedOn { get; set; }
         public int RetryCount { get; set; }
         public string? LastError { get; set; }
+        public string? CorrelationId { get; set; }
+        public string? CausationId { get; set; }
 
         public bool IsProcessed => ProcessedOn.HasValue;
+        public bool IsDeadLetter(int maxRetries) => !IsProcessed && RetryCount >= maxRetries;
     }
 }

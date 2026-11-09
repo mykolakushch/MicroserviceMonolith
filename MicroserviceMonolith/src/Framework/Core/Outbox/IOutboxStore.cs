@@ -11,12 +11,17 @@ namespace MicroserviceMonolith.Core.Outbox
     public interface IOutboxStore
     {
         /// <summary>
+        /// Maximum number of delivery retry attempts before a message is marked as dead-letter.
+        /// </summary>
+        int MaxRetries { get; set; }
+
+        /// <summary>
         /// Saves a new outbox message.
         /// </summary>
         Task SaveAsync(OutboxMessage message, CancellationToken cancellationToken = default);
 
         /// <summary>
-        /// Retrieves pending unprocessed messages.
+        /// Retrieves pending unprocessed messages that have not exceeded <see cref="MaxRetries"/>.
         /// </summary>
         Task<IReadOnlyList<OutboxMessage>> GetPendingMessagesAsync(int batchSize = 50, CancellationToken cancellationToken = default);
 
@@ -29,5 +34,10 @@ namespace MicroserviceMonolith.Core.Outbox
         /// Marks a message as failed with an error message and increments its retry count.
         /// </summary>
         Task MarkAsFailedAsync(Guid messageId, string error, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Clears all processed messages from storage to maintain flat memory usage.
+        /// </summary>
+        Task ClearProcessedAsync(CancellationToken cancellationToken = default);
     }
 }

@@ -6,16 +6,19 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using MicroserviceMonolith.Core.Common;
+using MicroserviceMonolith.Core.Context;
 
 namespace MicroserviceMonolith.Core.Commands
 {
     /// <summary>
     /// Thread-safe in-memory command bus facilitating centralized command dispatch.
     /// Supports manual handler/middleware registration as well as resolution from <see cref="IServiceProvider"/>.
+    /// Optimized for high throughput and Native AOT with zero reflection on the execution hot path.
     /// </summary>
     public class CommandBus : ICommandBus
     {
         private readonly IServiceProvider? _serviceProvider;
+        private readonly ICorrelationContextAccessor? _correlationAccessor;
         private readonly ConcurrentDictionary<Type, Func<object, CancellationToken, Task<object?>>> _handlers = new();
         private readonly List<ICommandMiddleware> _middlewares = new();
         private readonly object _middlewareLock = new();
@@ -23,7 +26,7 @@ namespace MicroserviceMonolith.Core.Commands
         /// <summary>
         /// Initializes a new instance of <see cref="CommandBus"/> for manual registration.
         /// </summary>
-        public CommandBus() : this(null)
+        public CommandBus() : this(null, null)
         {
         }
 
@@ -31,9 +34,17 @@ namespace MicroserviceMonolith.Core.Commands
         /// Initializes a new instance of <see cref="CommandBus"/> with dependency injection support.
         /// </summary>
         /// <param name="serviceProvider">Optional service provider to resolve handlers and middlewares.</param>
-        public CommandBus(IServiceProvider? serviceProvider)
+        public CommandBus(IServiceProvider? serviceProvider) : this(serviceProvider, serviceProvider?.GetService<ICorrelationContextAccessor>())
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance with service provider and correlation context accessor.
+        /// </summary>
+        public CommandBus(IServiceProvider? serviceProvider, ICorrelationContextAccessor? correlationAccessor)
         {
             _serviceProvider = serviceProvider;
+            _correlationAccessor = correlationAccessor;
         }
 
         /// <summary>
@@ -82,18 +93,10 @@ namespace MicroserviceMonolith.Core.Commands
         }
 
         /// <inheritdoc />
-        public async Task<TResult> SendAsync<TResult>(ICommand<TResult> command, CancellationToken cancellationToken = default)
+        public Task<TResult> SendAsync<TResult>(ICommand<TResult> command, CancellationToken cancellationToken = default)
         {
             if (command == null) throw new ArgumentNullException(nameof(command));
-
-            var commandType = command.GetType();
-            var method = typeof(CommandBus)
-                .GetMethods()
-                .First(m => m.Name == nameof(SendAsync) && m.IsGenericMethod && m.GetGenericArguments().Length == 2)
-                .MakeGenericMethod(commandType, typeof(TResult));
-
-            var task = (Task<TResult>)method.Invoke(this, new object[] { command, cancellationToken })!;
-            return await task;
+            return CommandSenderCache<TResult>.SendAsync(this, command, cancellationToken);
         }
 
         /// <inheritdoc />
@@ -102,6 +105,12 @@ namespace MicroserviceMonolith.Core.Commands
             if (command == null) throw new ArgumentNullException(nameof(command));
 
             cancellationToken.ThrowIfCancellationRequested();
+
+            // Auto-initialize correlation context if not present
+            if (_correlationAccessor != null && _correlationAccessor.CorrelationContext == null)
+            {
+                _correlationAccessor.CorrelationContext = new CorrelationContext();
+            }
 
             // Collect all middlewares (both manually added and from DI)
             var allMiddlewares = new List<ICommandMiddleware>();
@@ -133,22 +142,23 @@ namespace MicroserviceMonolith.Core.Commands
                 }
                 else if (sp != null)
                 {
-                    var handlerTypeWithResult = typeof(ICommandHandler<TCommand, TResult>);
-                    var handlerWithResult = sp.GetService(handlerTypeWithResult) as ICommandHandler<TCommand, TResult>;
-                    if (handlerWithResult != null)
+                    // Direct generic resolution without runtime reflection!
+                    var handler = sp.GetService<ICommandHandler<TCommand, TResult>>();
+                    if (handler != null)
                     {
-                        handlerFunc = ct => handlerWithResult.HandleAsync(command, ct);
+                        handlerFunc = ct => handler.HandleAsync(command, ct);
                     }
                     else if (typeof(TResult) == typeof(Unit) && typeof(ICommand).IsAssignableFrom(typeof(TCommand)))
                     {
-                        var handlerTypeVoid = typeof(ICommandHandler<>).MakeGenericType(typeof(TCommand));
-                        var handlerVoid = sp.GetService(handlerTypeVoid);
-                        if (handlerVoid != null)
+                        // Fallback when ICommandHandler<TCommand> was registered manually without Unit adapter
+                        var voidHandlerType = typeof(ICommandHandler<>).MakeGenericType(typeof(TCommand));
+                        var voidHandler = sp.GetService(voidHandlerType);
+                        if (voidHandler != null)
                         {
-                            var handleMethod = handlerTypeVoid.GetMethod("HandleAsync")!;
+                            var method = voidHandlerType.GetMethod(nameof(ICommandHandler<ICommand>.HandleAsync))!;
                             handlerFunc = async ct =>
                             {
-                                var task = (Task)handleMethod.Invoke(handlerVoid, new object[] { command, ct })!;
+                                var task = (Task)method.Invoke(voidHandler, new object[] { command, ct })!;
                                 await task;
                                 return (TResult)(object)Unit.Value;
                             };
@@ -183,6 +193,29 @@ namespace MicroserviceMonolith.Core.Commands
             finally
             {
                 scope?.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Cached dispatch table for commands to avoid repeated reflection lookups on SendAsync&lt;TResult&gt;.
+        /// </summary>
+        private static class CommandSenderCache<TResult>
+        {
+            private static readonly ConcurrentDictionary<Type, Func<CommandBus, object, CancellationToken, Task<TResult>>> _invokers = new();
+
+            public static Task<TResult> SendAsync(CommandBus bus, ICommand<TResult> command, CancellationToken ct)
+            {
+                var invoker = _invokers.GetOrAdd(command.GetType(), cmdType =>
+                {
+                    var method = typeof(CommandBus)
+                        .GetMethods()
+                        .First(m => m.Name == nameof(CommandBus.SendAsync) && m.IsGenericMethod && m.GetGenericArguments().Length == 2)
+                        .MakeGenericMethod(cmdType, typeof(TResult));
+
+                    return (b, cmd, token) => (Task<TResult>)method.Invoke(b, new object[] { cmd, token })!;
+                });
+
+                return invoker(bus, command, ct);
             }
         }
     }
