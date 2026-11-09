@@ -43,6 +43,7 @@ jobs:
         run: dotnet test --configuration Release --no-build --verbosity normal
 
       - name: Pack NuGet package
+        id: pack
         run: dotnet pack MicroserviceMonolith/MicroserviceMonolith.csproj --configuration Release --no-build --output ./artifacts
 
       - name: Prepare binary archive
@@ -59,24 +60,27 @@ jobs:
             --api-key "${{ secrets.GITHUB_TOKEN }}" \
             --skip-duplicate || true
 
-      - name: NuGet Login (OIDC Trusted Publishing)
-        uses: NuGet/login@v1
-        id: nuget-login
-        with:
-          user: ${{ inputs.nuget_username || vars.NUGET_USERNAME || github.repository_owner }}
-
-      - name: Publish to NuGet.org
-        run: |
-          dotnet nuget push ./artifacts/*.nupkg \
-            --source "https://api.nuget.org/v3/index.json" \
-            --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
-            --skip-duplicate
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
+        if: steps.pack.outcome == 'success'
         with:
           generate_release_notes: true
           files: |
             ./artifacts/*.nupkg
             ./artifacts/*.snupkg
             ./artifacts/MicroserviceMonolith-v1.0.0-binaries.zip
+
+      - name: NuGet Login (OIDC Trusted Publishing)
+        uses: NuGet/login@v1
+        id: nuget-login
+        continue-on-error: true
+        with:
+          user: ${{ inputs.nuget_username || vars.NUGET_USERNAME || github.repository_owner }}
+
+      - name: Publish to NuGet.org
+        if: steps.nuget-login.outcome == 'success'
+        run: |
+          dotnet nuget push ./artifacts/*.nupkg \
+            --source "https://api.nuget.org/v3/index.json" \
+            --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
+            --skip-duplicate
