@@ -6,6 +6,7 @@ using FluentAssertions;
 using MicroserviceMonolith.Core.Commands;
 using MicroserviceMonolith.Core.Events;
 using MicroserviceMonolith.Core.Logging;
+using MicroserviceMonolith.Core.Queries;
 using Xunit;
 
 namespace MicroserviceMonolith.Tests
@@ -14,6 +15,7 @@ namespace MicroserviceMonolith.Tests
     {
         public record FlakyCommand : ICommand;
         public record FlakyEvent : EventBase;
+        public record FlakyQuery : IQuery<int>;
 
         private class FakeLogger : ILogger
         {
@@ -70,6 +72,102 @@ namespace MicroserviceMonolith.Tests
                 .WithMessage("Always fails");
 
             attempts.Should().Be(3); // 1 initial + 2 retries = 3
+        }
+
+        [Fact]
+        public async Task RetryCommandMiddleware_DoesNotRetryWhenCallerCancelled()
+        {
+            var logger = new FakeLogger();
+            var middleware = new RetryCommandMiddleware(3, TimeSpan.Zero, 1.0, false, null, logger.Log);
+            using var cts = new CancellationTokenSource();
+
+            int attempts = 0;
+            Func<Task<int>> cancellingOperation = () =>
+            {
+                attempts++;
+                cts.Cancel();
+                throw new OperationCanceledException(cts.Token);
+            };
+
+            Func<Task> act = async () => await middleware.InvokeAsync(
+                new CommandBusTests.TestResultCommand(0, 0),
+                cancellingOperation,
+                cts.Token);
+
+            await act.Should().ThrowAsync<OperationCanceledException>();
+            attempts.Should().Be(1);
+            logger.Messages.Should().BeEmpty(); // cancellation is not a failure to retry
+        }
+
+        [Fact]
+        public async Task RetryCommandMiddleware_RetriesTimeoutWhenCallerTokenNotCancelled()
+        {
+            var logger = new FakeLogger();
+            var middleware = new RetryCommandMiddleware(3, TimeSpan.Zero, 1.0, false, null, logger.Log);
+
+            int attempts = 0;
+            Func<Task<int>> timingOutOperation = () =>
+            {
+                attempts++;
+                if (attempts < 3)
+                {
+                    // e.g. an HttpClient timeout: cancellation exception, but the caller did not cancel
+                    throw new TaskCanceledException("timeout");
+                }
+                return Task.FromResult(7);
+            };
+
+            var result = await middleware.InvokeAsync(
+                new CommandBusTests.TestResultCommand(0, 0),
+                timingOutOperation,
+                CancellationToken.None);
+
+            result.Should().Be(7);
+            attempts.Should().Be(3);
+        }
+
+        [Fact]
+        public async Task RetryQueryMiddleware_DoesNotRetryWhenCallerCancelled()
+        {
+            var logger = new FakeLogger();
+            var middleware = new RetryQueryMiddleware(3, TimeSpan.Zero, 1.0, false, null, logger.Log);
+            using var cts = new CancellationTokenSource();
+
+            int attempts = 0;
+            Func<Task<int>> cancellingOperation = () =>
+            {
+                attempts++;
+                cts.Cancel();
+                throw new OperationCanceledException(cts.Token);
+            };
+
+            Func<Task> act = async () => await middleware.InvokeAsync(new FlakyQuery(), cancellingOperation, cts.Token);
+
+            await act.Should().ThrowAsync<OperationCanceledException>();
+            attempts.Should().Be(1);
+            logger.Messages.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task RetryEventMiddleware_DoesNotRetryWhenCallerCancelled()
+        {
+            var logger = new FakeLogger();
+            var middleware = new RetryEventMiddleware(3, TimeSpan.Zero, 1.0, false, null, logger.Log);
+            using var cts = new CancellationTokenSource();
+
+            int attempts = 0;
+            Func<Task> cancellingOperation = () =>
+            {
+                attempts++;
+                cts.Cancel();
+                throw new OperationCanceledException(cts.Token);
+            };
+
+            Func<Task> act = async () => await middleware.InvokeAsync(new FlakyEvent(), cancellingOperation, cts.Token);
+
+            await act.Should().ThrowAsync<OperationCanceledException>();
+            attempts.Should().Be(1);
+            logger.Messages.Should().BeEmpty();
         }
 
         [Fact]

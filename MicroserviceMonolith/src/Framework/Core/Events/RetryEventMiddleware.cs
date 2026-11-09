@@ -60,7 +60,9 @@ namespace MicroserviceMonolith.Core.Events
                     await next();
                     break;
                 }
-                catch (Exception ex) when (attempt <= _maxRetries && (_shouldRetry == null || _shouldRetry(ex)))
+                // Never retry once the caller has cancelled; other failures (including timeouts that surface
+                // as OperationCanceledException without the caller's token being cancelled) remain retriable.
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested && attempt <= _maxRetries && (_shouldRetry == null || _shouldRetry(ex)))
                 {
                     _logAction($"[Event] {@event.GetType().Name} attempt {attempt} failed: {ex.Message}. Retrying...");
 

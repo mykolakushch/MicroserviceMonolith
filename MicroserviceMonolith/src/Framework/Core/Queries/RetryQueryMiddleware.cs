@@ -57,7 +57,9 @@ namespace MicroserviceMonolith.Core.Queries
                     cancellationToken.ThrowIfCancellationRequested();
                     return await next();
                 }
-                catch (Exception ex) when (attempt <= _maxRetries && (_shouldRetry == null || _shouldRetry(ex)))
+                // Never retry once the caller has cancelled; other failures (including timeouts that surface
+                // as OperationCanceledException without the caller's token being cancelled) remain retriable.
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested && attempt <= _maxRetries && (_shouldRetry == null || _shouldRetry(ex)))
                 {
                     _logAction($"[Query] {query.GetType().Name} attempt {attempt} failed: {ex.Message}. Retrying...");
 
