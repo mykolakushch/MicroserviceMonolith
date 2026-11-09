@@ -86,7 +86,9 @@ flowchart TD
 - **Outbox Pattern (reference implementation)**:
   - Event dispatching through `IOutboxStore` and `IOutboxProcessor`.
   - The built-in store is in-memory and **not durable**: messages are lost on process exit and writes are not tied to your business transaction. For transactional guarantees, implement `IOutboxStore` over your database and save messages in the same transaction as your data.
-  - Nothing writes to the outbox or drives `ProcessBatchAsync` automatically; call them from your own code or a background loop.
+  - Add events with `IOutboxWriter.AddAsync(evt)` (scoped; stamps the ambient correlation context). Pending messages are dispatched by a background hosted service that polls the outbox (`AutoProcessOutbox`, `OutboxPollingInterval`, `OutboxBatchSize`); nothing is written to the outbox automatically when you publish an event.
+  - `IOutboxStore` may be registered as **scoped** (e.g. a database store sharing the request's unit of work): the processor resolves it from a new scope per batch.
+  - The in-memory store leases messages (no double dispatch between concurrent processors), retries failures with exponential backoff, and keeps messages that exhausted `MaxRetries` as inspectable dead letters (`GetDeadLetters()`, `PurgeDeadLetters()`).
   - Delivery is at-least-once: subscribers must be idempotent.
 - **User Actions Adapter**:
   - Adapter module converting external UI/API triggers into domain events and commands.

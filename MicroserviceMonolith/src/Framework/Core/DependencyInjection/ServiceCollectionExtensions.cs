@@ -69,11 +69,26 @@ namespace MicroserviceMonolith.Core.DependencyInjection
             if (options.EnableOutbox)
             {
                 services.TryAddSingleton<IOutboxStore, InMemoryOutboxStore>();
+                // The processor resolves the store from a new scope per batch, so IOutboxStore may be scoped
+                // (for example a database-backed store sharing the request's unit of work).
                 services.TryAddSingleton<IOutboxProcessor>(sp => new OutboxProcessor(
-                    sp.GetRequiredService<IOutboxStore>(),
+                    sp.GetRequiredService<IServiceScopeFactory>(),
                     sp.GetRequiredService<IEventPublisher>(),
                     sp.GetService<ICorrelationContextAccessor>(),
                     sp.GetService<ILogger>() != null ? sp.GetRequiredService<ILogger>().Log : null));
+                services.TryAddScoped<IOutboxWriter>(sp => new OutboxWriter(
+                    sp.GetRequiredService<IOutboxStore>(),
+                    sp.GetService<ICorrelationContextAccessor>()));
+
+                if (options.AutoProcessOutbox)
+                {
+                    services.TryAddSingleton(new OutboxProcessingOptions
+                    {
+                        PollingInterval = options.OutboxPollingInterval,
+                        BatchSize = options.OutboxBatchSize
+                    });
+                    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, OutboxProcessorHostedService>());
+                }
             }
 
             // Assembly scanning for handlers and modules

@@ -17,6 +17,17 @@ namespace MicroserviceMonolith.Core.Outbox
         public string? CorrelationId { get; set; }
         public string? CausationId { get; set; }
 
+        /// <summary>
+        /// While set to a future time, the message is leased by a processor and is not handed out again.
+        /// Lets several processors share one store without dispatching the same message twice.
+        /// </summary>
+        public DateTimeOffset? LockedUntil { get; set; }
+
+        /// <summary>
+        /// Earliest time at which a failed message may be attempted again (retry backoff).
+        /// </summary>
+        public DateTimeOffset? NextAttemptOn { get; set; }
+
         public bool IsProcessed => ProcessedOn.HasValue;
         public bool IsDeadLetter(int maxRetries) => !IsProcessed && RetryCount >= maxRetries;
     }

@@ -64,7 +64,7 @@ namespace MicroserviceMonolith.Tests
 
             services.AddMicroserviceMonolith(options => options.AutoManageModuleLifecycle = false);
 
-            services.Any(d => d.ServiceType == typeof(IHostedService)).Should().BeFalse();
+            services.Any(d => d.ImplementationType == typeof(ModuleLifecycleHostedService)).Should().BeFalse();
         }
 
         [Fact]

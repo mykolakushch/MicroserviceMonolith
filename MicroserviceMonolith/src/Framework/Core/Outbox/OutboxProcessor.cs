@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Concurrent;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -25,13 +24,20 @@ namespace MicroserviceMonolith.Core.Outbox
     }
 
     /// <summary>
-    /// Default processor for dispatching transactional outbox messages.
+    /// Default processor for dispatching outbox messages.
     /// Caches a typed publisher per event type (reflection runs once per event type, not per message)
     /// and restores ambient <see cref="CorrelationContext"/> for end-to-end tracing.
     /// </summary>
+    /// <remarks>
+    /// Delivery is at-least-once: if publishing succeeds but the result cannot be recorded (or one of several
+    /// subscribers fails), the message is delivered again, so subscribers must be idempotent.
+    /// When constructed with an <see cref="IServiceScopeFactory"/>, a new scope is created for every batch and the
+    /// <see cref="IOutboxStore"/> is resolved from it, which allows scoped (for example database-backed) stores.
+    /// </remarks>
     public class OutboxProcessor : IOutboxProcessor
     {
-        private readonly IOutboxStore _outboxStore;
+        private readonly IOutboxStore? _outboxStore;
+        private readonly IServiceScopeFactory? _scopeFactory;
         private readonly IEventPublisher _eventPublisher;
         private readonly ICorrelationContextAccessor? _correlationAccessor;
         private readonly Action<string>? _logAction;
@@ -69,10 +75,46 @@ namespace MicroserviceMonolith.Core.Outbox
             _logAction = logAction;
         }
 
+        /// <summary>
+        /// Creates a processor that resolves <see cref="IOutboxStore"/> from a new scope for every batch,
+        /// so the store may be registered with a scoped lifetime.
+        /// </summary>
+        public OutboxProcessor(
+            IServiceScopeFactory scopeFactory,
+            IEventPublisher eventPublisher,
+            ICorrelationContextAccessor? correlationAccessor = null,
+            Action<string>? logAction = null)
+        {
+            _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+            _eventPublisher = eventPublisher ?? throw new ArgumentNullException(nameof(eventPublisher));
+            _correlationAccessor = correlationAccessor;
+            _logAction = logAction;
+        }
+
         /// <inheritdoc />
         public async Task<int> ProcessBatchAsync(int batchSize = 50, CancellationToken cancellationToken = default)
         {
-            var pendingMessages = await _outboxStore.GetPendingMessagesAsync(batchSize, cancellationToken);
+            IServiceScope? scope = null;
+            try
+            {
+                var store = _outboxStore;
+                if (store == null)
+                {
+                    scope = _scopeFactory!.CreateScope();
+                    store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+                }
+
+                return await ProcessBatchCoreAsync(store, batchSize, cancellationToken);
+            }
+            finally
+            {
+                scope?.Dispose();
+            }
+        }
+
+        private async Task<int> ProcessBatchCoreAsync(IOutboxStore store, int batchSize, CancellationToken cancellationToken)
+        {
+            var pendingMessages = await store.GetPendingMessagesAsync(batchSize, cancellationToken);
             int processedCount = 0;
 
             foreach (var message in pendingMessages)
@@ -81,12 +123,14 @@ namespace MicroserviceMonolith.Core.Outbox
 
                 try
                 {
-                    // Restore correlation context if available
-                    if (_correlationAccessor != null && !string.IsNullOrWhiteSpace(message.CorrelationId))
+                    // Restore the message's correlation context (or clear the previous message's one)
+                    if (_correlationAccessor != null)
                     {
-                        _correlationAccessor.CorrelationContext = new CorrelationContext(
-                            message.CorrelationId,
-                            causationId: message.CausationId ?? message.Id.ToString());
+                        _correlationAccessor.CorrelationContext = string.IsNullOrWhiteSpace(message.CorrelationId)
+                            ? null
+                            : new CorrelationContext(
+                                message.CorrelationId,
+                                causationId: message.CausationId ?? message.Id.ToString());
                     }
 
                     var eventObj = message.Event;
@@ -98,14 +142,21 @@ namespace MicroserviceMonolith.Core.Outbox
 
                     await publishInvoker.InvokeAsync(_eventPublisher, eventObj, cancellationToken);
 
-                    await _outboxStore.MarkAsProcessedAsync(message.Id, cancellationToken);
+                    await store.MarkAsProcessedAsync(message.Id, cancellationToken);
                     processedCount++;
                     _logAction?.Invoke($"[Outbox] Processed message {message.Id} of type {message.EventType}");
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
                 {
-                    _logAction?.Invoke($"[Outbox] Failed to process message {message.Id}: {ex.Message}");
-                    await _outboxStore.MarkAsFailedAsync(message.Id, ex.Message, cancellationToken);
+                    // Cancellation requested by the caller is not a delivery failure and must not consume a retry.
+                    var attempts = message.RetryCount + 1;
+                    _logAction?.Invoke($"[Outbox] Failed to process message {message.Id} (attempt {attempts}): {ex.Message}");
+                    await store.MarkAsFailedAsync(message.Id, ex.Message, cancellationToken);
+
+                    if (attempts >= store.MaxRetries)
+                    {
+                        _logAction?.Invoke($"[Outbox] Message {message.Id} of type {message.EventType} exhausted {store.MaxRetries} attempts and is dead-lettered");
+                    }
                 }
             }
 

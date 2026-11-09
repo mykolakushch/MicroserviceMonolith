@@ -23,6 +23,11 @@ namespace MicroserviceMonolith.Core.Outbox
         /// <summary>
         /// Retrieves pending unprocessed messages that have not exceeded <see cref="MaxRetries"/>.
         /// </summary>
+        /// <remarks>
+        /// Implementations should not hand the same message to two concurrent processors (for example by leasing
+        /// it, or with <c>SELECT ... FOR UPDATE SKIP LOCKED</c>), and should honor retry backoff
+        /// (<see cref="OutboxMessage.NextAttemptOn"/>). The in-memory store does both.
+        /// </remarks>
         Task<IReadOnlyList<OutboxMessage>> GetPendingMessagesAsync(int batchSize = 50, CancellationToken cancellationToken = default);
 
         /// <summary>
