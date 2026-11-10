@@ -122,12 +122,6 @@ namespace MicroserviceMonolith.Core.Commands
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Auto-initialize correlation context if not present
-            if (_correlationAccessor != null && _correlationAccessor.CorrelationContext == null)
-            {
-                _correlationAccessor.CorrelationContext = new CorrelationContext();
-            }
-
             // Collect all middlewares (both manually added and from DI)
             var allMiddlewares = new List<ICommandMiddleware>();
             lock (_middlewareLock)
@@ -135,29 +129,14 @@ namespace MicroserviceMonolith.Core.Commands
                 allMiddlewares.AddRange(_middlewares);
             }
 
-            IServiceScope? scope = null;
-            AmbientScopeEntry? previousAmbient = null;
-            try
+            await using var frame = DispatchFrame.Begin(_serviceProvider, _shareScope, _correlationAccessor, ensureCorrelation: true);
+            IServiceProvider? sp = frame.Services;
+            if (sp != null)
             {
-                IServiceProvider? sp = _serviceProvider;
-                if (sp != null)
-                {
-                    if (_shareScope && AmbientDispatchScope.TryGet(_serviceProvider!, out var sharedScope))
-                    {
-                        // Nested dispatch: reuse the scope of the outermost one
-                        sp = sharedScope;
-                    }
-                    else
-                    {
-                        scope = sp.CreateScope();
-                        sp = scope.ServiceProvider;
-                        if (_shareScope)
-                        {
-                            previousAmbient = AmbientDispatchScope.Set(_serviceProvider!, sp);
-                        }
-                    }
-                    allMiddlewares.AddRange(sp.GetServices<ICommandMiddleware>());
-                }
+                allMiddlewares.AddRange(sp.GetServices<ICommandMiddleware>());
+            }
+
+            {
 
                 Func<CancellationToken, Task<TResult>> handlerFunc;
 
@@ -213,17 +192,6 @@ namespace MicroserviceMonolith.Core.Commands
                 }
 
                 return await pipeline();
-            }
-            finally
-            {
-                if (scope != null)
-                {
-                    if (_shareScope)
-                    {
-                        AmbientDispatchScope.Restore(previousAmbient);
-                    }
-                    scope.Dispose();
-                }
             }
         }
 

@@ -27,7 +27,7 @@ namespace MicroserviceMonolith.Tests
         public async Task RetryCommandMiddleware_RetriesUntilSuccess()
         {
             var logger = new FakeLogger();
-            var middleware = new RetryCommandMiddleware(3, TimeSpan.FromMilliseconds(5), 1.0, false, null, logger.Log);
+            var middleware = new RetryCommandMiddleware(3, TimeSpan.FromMilliseconds(5), 1.0, false, null, logger.Log, retryNonIdempotentCommands: true);
 
             int attempts = 0;
             Func<Task<int>> failingOperation = () =>
@@ -54,7 +54,7 @@ namespace MicroserviceMonolith.Tests
         public async Task RetryCommandMiddleware_ExceedingMaxRetries_ThrowsException()
         {
             var logger = new FakeLogger();
-            var middleware = new RetryCommandMiddleware(2, TimeSpan.FromMilliseconds(5), 1.0, false, null, logger.Log);
+            var middleware = new RetryCommandMiddleware(2, TimeSpan.FromMilliseconds(5), 1.0, false, null, logger.Log, retryNonIdempotentCommands: true);
 
             int attempts = 0;
             Func<Task<int>> alwaysFailing = () =>
@@ -78,7 +78,7 @@ namespace MicroserviceMonolith.Tests
         public async Task RetryCommandMiddleware_DoesNotRetryWhenCallerCancelled()
         {
             var logger = new FakeLogger();
-            var middleware = new RetryCommandMiddleware(3, TimeSpan.Zero, 1.0, false, null, logger.Log);
+            var middleware = new RetryCommandMiddleware(3, TimeSpan.Zero, 1.0, false, null, logger.Log, retryNonIdempotentCommands: true);
             using var cts = new CancellationTokenSource();
 
             int attempts = 0;
@@ -103,7 +103,7 @@ namespace MicroserviceMonolith.Tests
         public async Task RetryCommandMiddleware_RetriesTimeoutWhenCallerTokenNotCancelled()
         {
             var logger = new FakeLogger();
-            var middleware = new RetryCommandMiddleware(3, TimeSpan.Zero, 1.0, false, null, logger.Log);
+            var middleware = new RetryCommandMiddleware(3, TimeSpan.Zero, 1.0, false, null, logger.Log, retryNonIdempotentCommands: true);
 
             int attempts = 0;
             Func<Task<int>> timingOutOperation = () =>

@@ -42,9 +42,9 @@ namespace MicroserviceMonolith.Core.DependencyInjection
         /// the whole call chain. Default: false (every dispatch gets its own scope).
         /// </summary>
         /// <remarks>
-        /// The outermost dispatch owns and disposes the scope. Handlers of <c>EventPublishStrategy.Parallel</c> run
-        /// concurrently inside the shared scope, so scoped services must be safe for that. Background publications
-        /// always get their own scope.
+        /// The outermost dispatch owns and disposes the scope. Handlers of <c>EventPublishStrategy.Parallel</c> always
+        /// run in a scope of their own (never the shared one), so concurrent handlers do not share scoped services.
+        /// Background publications always get their own scope.
         /// </remarks>
         public bool ShareScopeBetweenNestedDispatches { get; set; } = false;
         public IConfiguration Configuration { get; set; } = new ConfigurationBuilder().Build();

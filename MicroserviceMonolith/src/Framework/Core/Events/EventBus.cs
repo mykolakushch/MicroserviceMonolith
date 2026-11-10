@@ -19,7 +19,7 @@ namespace MicroserviceMonolith.Core.Events
     /// <remarks>
     /// <list type="bullet">
     /// <item><description>Dispatch is by the static type <c>TEvent</c> given to <c>PublishAsync</c>: handlers of a base class or interface are not invoked for a derived event.</description></item>
-    /// <item><description>With <see cref="EventPublishStrategy.Parallel"/> all handlers of one publication share a single DI scope. Scoped services (such as a DbContext) are not thread-safe, so handlers that run concurrently must not share them unsafely.</description></item>
+    /// <item><description>With <see cref="EventPublishStrategy.Parallel"/> every DI-registered handler runs in a DI scope of its own, so concurrent handlers never share scoped services such as a DbContext (handler middlewares are still shared and must be stateless). Handlers registered with <c>Subscribe</c> have no scope.</description></item>
     /// <item><description>With <see cref="EventPublishStrategy.Sequential"/> and <see cref="EventPublishStrategy.Parallel"/> every handler runs even if another fails; one failure is rethrown as is, several as an <see cref="AggregateException"/>.</description></item>
     /// </list>
     /// </remarks>
@@ -173,27 +173,11 @@ namespace MicroserviceMonolith.Core.Events
                 handlerMiddlewares.AddRange(_handlerMiddlewares);
             }
 
-            IServiceScope? scope = null;
-            AmbientScopeEntry? previousAmbient = null;
-            try
+            await using var frame = DispatchFrame.Begin(_serviceProvider, _shareScope, null, ensureCorrelation: false);
             {
-                IServiceProvider? sp = _serviceProvider;
+                IServiceProvider? sp = frame.Services;
                 if (sp != null)
                 {
-                    if (_shareScope && AmbientDispatchScope.TryGet(_serviceProvider!, out var sharedScope))
-                    {
-                        // Nested dispatch: reuse the scope of the outermost one
-                        sp = sharedScope;
-                    }
-                    else
-                    {
-                        scope = sp.CreateScope();
-                        sp = scope.ServiceProvider;
-                        if (_shareScope)
-                        {
-                            previousAmbient = AmbientDispatchScope.Set(_serviceProvider!, sp);
-                        }
-                    }
 
                     // Resolve DI middlewares
                     var diEventMiddlewares = sp.GetServices<IEventMiddleware>();
@@ -238,10 +222,19 @@ namespace MicroserviceMonolith.Core.Events
                     // 2. Resolve DI event handlers
                     if (sp != null)
                     {
-                        var diHandlers = sp.GetServices<IEventHandler<TEvent>>();
-                        foreach (var diHandler in diHandlers)
+                        if (strategy == EventPublishStrategy.Parallel && _serviceProvider != null)
                         {
-                            rawHandlers.Add(ct => diHandler.HandleAsync(@event, ct));
+                            // Concurrent handlers must not share scoped services (a DbContext is not thread-safe):
+                            // every DI handler runs in a scope of its own.
+                            AddIsolatedParallelHandlers(rawHandlers, @event);
+                        }
+                        else
+                        {
+                            var diHandlers = sp.GetServices<IEventHandler<TEvent>>();
+                            foreach (var diHandler in diHandlers)
+                            {
+                                rawHandlers.Add(ct => diHandler.HandleAsync(@event, ct));
+                            }
                         }
                     }
 
@@ -333,16 +326,86 @@ namespace MicroserviceMonolith.Core.Events
 
                 await pipeline();
             }
+        }
+
+        /// <summary>
+        /// Adds every DI-registered handler of <typeparamref name="TEvent"/> so that each one runs in its own DI scope.
+        /// Handlers are resolved in registration order; the handler at index i is taken from the i-th scope, so
+        /// the other instances created in that scope are simply discarded with it.
+        /// </summary>
+        private void AddIsolatedParallelHandlers<TEvent>(List<Func<CancellationToken, Task>> target, TEvent @event)
+            where TEvent : class
+        {
+            var root = _serviceProvider!;
+            var probe = root.CreateScope();
+            List<IEventHandler<TEvent>> probeHandlers;
+            try
+            {
+                probeHandlers = probe.ServiceProvider.GetServices<IEventHandler<TEvent>>().ToList();
+            }
+            catch
+            {
+                probe.Dispose();
+                throw;
+            }
+
+            if (probeHandlers.Count == 0)
+            {
+                probe.Dispose();
+                return;
+            }
+
+            // The first handler reuses the probe scope and owns it
+            target.Add(ct => RunHandlerInScopeAsync(probe, probeHandlers[0], @event, ct));
+
+            for (var i = 1; i < probeHandlers.Count; i++)
+            {
+                var index = i;
+                target.Add(async ct =>
+                {
+                    var scope = root.CreateScope();
+                    IEventHandler<TEvent> handler;
+                    try
+                    {
+                        handler = scope.ServiceProvider.GetServices<IEventHandler<TEvent>>().ElementAt(index);
+                    }
+                    catch
+                    {
+                        await ScopeDisposal.DisposeAsync(scope).ConfigureAwait(false);
+                        throw;
+                    }
+
+                    await RunHandlerInScopeAsync(scope, handler, @event, ct).ConfigureAwait(false);
+                });
+            }
+        }
+
+        private async Task RunHandlerInScopeAsync<TEvent>(
+            IServiceScope scope,
+            IEventHandler<TEvent> handler,
+            TEvent @event,
+            CancellationToken cancellationToken)
+            where TEvent : class
+        {
+            AmbientScopeEntry? previousAmbient = null;
+            try
+            {
+                if (_shareScope)
+                {
+                    // Nested dispatches from this handler share this handler's scope, not a sibling's
+                    previousAmbient = AmbientDispatchScope.Set(_serviceProvider!, scope.ServiceProvider);
+                }
+
+                await handler.HandleAsync(@event, cancellationToken).ConfigureAwait(false);
+            }
             finally
             {
-                if (scope != null)
+                if (_shareScope)
                 {
-                    if (_shareScope)
-                    {
-                        AmbientDispatchScope.Restore(previousAmbient);
-                    }
-                    scope.Dispose();
+                    AmbientDispatchScope.Restore(previousAmbient);
                 }
+
+                await ScopeDisposal.DisposeAsync(scope).ConfigureAwait(false);
             }
         }
 
