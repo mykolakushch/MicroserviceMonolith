@@ -2,7 +2,7 @@ using System;
 using System.Threading.Tasks;
 using FluentAssertions;
 using MicroserviceMonolith.Core.Events;
-using MicroserviceMonolith.Core.UserActions;
+using MicroserviceMonolith.Adapters.UserActions;
 using Xunit;
 
 namespace MicroserviceMonolith.Tests
@@ -42,6 +42,24 @@ namespace MicroserviceMonolith.Tests
 
             await act.Should().ThrowAsync<ArgumentException>()
                 .WithMessage("*Action 'Unknown' is not registered.*");
+        }
+
+        [Fact]
+        public async Task ObsoleteCoreShim_StillWorks()
+        {
+#pragma warning disable CS0618
+            var userAction = new MicroserviceMonolith.Core.UserActions.UserAction(new EventBus());
+            string? sender = null;
+            userAction.RegisterAction("Ping", ctx =>
+            {
+                sender = ctx.Sender.ToString();
+                return Task.CompletedTask;
+            });
+
+            await userAction.DispatchActionAsync("Ping", new MicroserviceMonolith.Core.UserActions.UserActionContext("Btn", 1));
+#pragma warning restore CS0618
+
+            sender.Should().Be("Btn");
         }
     }
 }

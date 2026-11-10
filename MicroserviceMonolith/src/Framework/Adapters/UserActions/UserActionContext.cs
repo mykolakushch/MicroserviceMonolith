@@ -1,7 +1,7 @@
 using System;
 using System.Threading;
 
-namespace MicroserviceMonolith.Core.UserActions
+namespace MicroserviceMonolith.Adapters.UserActions
 {
     /// <summary>
     /// Represents the contextual state and metadata of a user or system interaction triggering an action.

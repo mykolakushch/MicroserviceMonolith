@@ -83,10 +83,14 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                     sp.GetRequiredService<IServiceScopeFactory>(),
                     sp.GetRequiredService<IEventPublisher>(),
                     sp.GetService<ICorrelationContextAccessor>(),
-                    sp.GetService<ILogger>()));
+                    sp.GetService<ILogger>())
+                {
+                    EventSerializer = sp.GetService<IOutboxEventSerializer>()
+                });
                 services.TryAddScoped<IOutboxWriter>(sp => new OutboxWriter(
                     sp.GetRequiredService<IOutboxStore>(),
-                    sp.GetService<ICorrelationContextAccessor>()));
+                    sp.GetService<ICorrelationContextAccessor>(),
+                    sp.GetService<IOutboxEventSerializer>()));
 
                 if (options.AutoProcessOutbox)
                 {

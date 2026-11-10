@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace MicroserviceMonolith.Core.Outbox
 {
@@ -8,8 +9,29 @@ namespace MicroserviceMonolith.Core.Outbox
     public class OutboxMessage
     {
         public Guid Id { get; init; } = Guid.NewGuid();
-        public string EventType { get; init; } = string.Empty;
-        public object Event { get; init; } = default!;
+        public string EventType { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The event instance. Always set for messages created in this process; <c>null</c> for a message loaded
+        /// from a durable store, which is recreated from <see cref="Payload"/> by an <see cref="IOutboxEventSerializer"/>.
+        /// </summary>
+        public object? Event { get; init; }
+
+        /// <summary>
+        /// Serialized event (see <see cref="IOutboxEventSerializer"/>). Together with <see cref="EventType"/> and
+        /// <see cref="SchemaVersion"/> this is what a durable store persists.
+        /// </summary>
+        public string? Payload { get; set; }
+
+        /// <summary>
+        /// Version of the event schema that <see cref="Payload"/> was written with. Default: 1.
+        /// </summary>
+        public int SchemaVersion { get; set; } = 1;
+
+        /// <summary>
+        /// Free-form metadata for transports and stores (for example routing keys).
+        /// </summary>
+        public IDictionary<string, string> Headers { get; set; } = new Dictionary<string, string>();
         public DateTimeOffset OccurredOn { get; init; } = DateTimeOffset.UtcNow;
         public DateTimeOffset? ProcessedOn { get; set; }
         public int RetryCount { get; set; }

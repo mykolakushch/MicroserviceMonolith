@@ -12,7 +12,7 @@ using MicroserviceMonolith.Core.Execution;
 using MicroserviceMonolith.Core.Modules;
 using MicroserviceMonolith.Core.Outbox;
 using MicroserviceMonolith.Core.Queries;
-using MicroserviceMonolith.Core.UserActions;
+using MicroserviceMonolith.Adapters.UserActions;
 
 namespace FrameworkExample
 {

@@ -28,11 +28,19 @@ namespace MicroserviceMonolith.Core.Outbox
     {
         private readonly IOutboxStore _store;
         private readonly ICorrelationContextAccessor? _correlationAccessor;
+        private readonly IOutboxEventSerializer? _serializer;
 
-        public OutboxWriter(IOutboxStore store, ICorrelationContextAccessor? correlationAccessor = null)
+        /// <param name="store">The outbox store to write to.</param>
+        /// <param name="correlationAccessor">Source of the correlation context to stamp onto messages.</param>
+        /// <param name="serializer">
+        /// When provided, the message also carries a stable <c>EventType</c> name, a schema version and a serialized
+        /// payload, which is what a durable store should persist. Without it only the in-memory event is stored.
+        /// </param>
+        public OutboxWriter(IOutboxStore store, ICorrelationContextAccessor? correlationAccessor = null, IOutboxEventSerializer? serializer = null)
         {
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _correlationAccessor = correlationAccessor;
+            _serializer = serializer;
         }
 
         /// <inheritdoc />
@@ -48,6 +56,14 @@ namespace MicroserviceMonolith.Core.Outbox
                 CorrelationId = context?.CorrelationId,
                 CausationId = context?.CausationId
             };
+
+            if (_serializer != null)
+            {
+                var payload = _serializer.Serialize(@event);
+                message.EventType = payload.EventType;
+                message.SchemaVersion = payload.SchemaVersion;
+                message.Payload = payload.Payload;
+            }
 
             return _store.SaveAsync(message, cancellationToken);
         }

@@ -46,6 +46,12 @@ namespace MicroserviceMonolith.Core.Outbox
         private static readonly ConcurrentDictionary<Type, PublishInvoker> _publishInvokers = new();
 
         /// <summary>
+        /// Recreates events of messages that carry only a serialized <see cref="OutboxMessage.Payload"/> (messages loaded
+        /// from a durable store). Not needed while every message still holds its in-memory event.
+        /// </summary>
+        public IOutboxEventSerializer? EventSerializer { get; init; }
+
+        /// <summary>
         /// Publishes an event known only as <see cref="object"/> through the typed <see cref="IEventPublisher"/> API.
         /// </summary>
         private abstract class PublishInvoker
@@ -120,6 +126,23 @@ namespace MicroserviceMonolith.Core.Outbox
             _logger = logger;
         }
 
+        private object ResolveEvent(OutboxMessage message)
+        {
+            if (message.Event != null)
+            {
+                return message.Event;
+            }
+
+            if (message.Payload == null || EventSerializer == null)
+            {
+                throw new InvalidOperationException(
+                    $"Outbox message {message.Id} ('{message.EventType}') has no in-memory event and cannot be recreated: " +
+                    (message.Payload == null ? "it has no payload." : "no IOutboxEventSerializer is configured."));
+            }
+
+            return EventSerializer.Deserialize(message.EventType, message.SchemaVersion, message.Payload);
+        }
+
         private void LogInfo(string message)
         {
             if (_logger != null) _logger.Log(message);
@@ -177,7 +200,7 @@ namespace MicroserviceMonolith.Core.Outbox
                                     causationId: message.CausationId ?? message.Id.ToString());
                         }
 
-                        var eventObj = message.Event;
+                        var eventObj = ResolveEvent(message);
                         var eventType = eventObj.GetType();
 
                         // Typed invoker is created once per event type (reflection), then called without reflection

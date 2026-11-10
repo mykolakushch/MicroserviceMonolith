@@ -3,15 +3,14 @@ using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 using MicroserviceMonolith.Core.Events;
-using MicroserviceMonolith.Core.Modules;
 
-namespace MicroserviceMonolith.Core.UserActions
+namespace MicroserviceMonolith.Adapters.UserActions
 {
     /// <summary>
-    /// Module for capturing user interactions and dispatching them into domain events or commands.
+    /// Adapter for capturing user interactions and dispatching them into domain events or commands.
     /// Thread-safe and supports cancellation tokens.
     /// </summary>
-    public class UserAction : ModuleBase
+    public class UserAction
     {
         private readonly IEventPublisher _eventPublisher;
         private readonly ConcurrentDictionary<string, Func<UserActionContext, CancellationToken, Task>> _actionMappings = new();
