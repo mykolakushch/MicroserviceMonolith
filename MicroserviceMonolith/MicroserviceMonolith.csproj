@@ -7,7 +7,7 @@
 		<AssemblyName>MicroserviceMonolith</AssemblyName>
 		<RootNamespace>MicroserviceMonolith</RootNamespace>
 		<PackageId>MicroserviceMonolith</PackageId>
-		<Version>1.8.0</Version>
+		<Version>1.9.0</Version>
 		<Authors>Mykola Kusch</Authors>
 		<Company>mnml</Company>
 		<Description>MicroserviceMonolith is a lightweight modular monolith framework for .NET. It provides modules with lifecycle management, in-memory command and query buses (CQRS), an event bus with sequential, parallel and background dispatch strategies, pipeline middlewares (logging, retry, error handling, performance tracking), a background execution queue, an in-memory outbox reference implementation, and Microsoft.Extensions.DependencyInjection integration.</Description>
@@ -20,6 +20,12 @@
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<NoWarn>$(NoWarn);1591</NoWarn>
+		<PublishRepositoryUrl>true</PublishRepositoryUrl>
+		<EmbedUntrackedSources>true</EmbedUntrackedSources>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+		<ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -32,5 +38,6 @@
 		<PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
+		<PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
 	</ItemGroup>
 </Project>

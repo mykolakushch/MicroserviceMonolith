@@ -70,16 +70,6 @@ jobs:
             --api-key "${{ secrets.GITHUB_TOKEN }}" \
             --skip-duplicate || true
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        if: steps.pack.outcome == 'success'
-        with:
-          generate_release_notes: true
-          files: |
-            ./artifacts/*.nupkg
-            ./artifacts/*.snupkg
-            ./artifacts/MicroserviceMonolith-v*-binaries.zip
-
       - name: NuGet Login (OIDC Trusted Publishing)
         uses: NuGet/login@v1
         id: nuget-login
@@ -92,3 +82,13 @@ jobs:
             --source "https://api.nuget.org/v3/index.json" \
             --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
             --skip-duplicate
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: steps.pack.outcome == 'success'
+        with:
+          generate_release_notes: true
+          files: |
+            ./artifacts/*.nupkg
+            ./artifacts/*.snupkg
+            ./artifacts/MicroserviceMonolith-v*-binaries.zip
