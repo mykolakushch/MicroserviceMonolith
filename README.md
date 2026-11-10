@@ -12,7 +12,7 @@
 
 - **[Part 1: How it works](#part-1-how-it-works)**: concepts, internals, guarantees
 - **[Part 2: How to use it](#part-2-how-to-use-it)**: installation, step-by-step guide, recipes, troubleshooting
-- [Upgrading](#upgrading) · [Releasing](#releasing-maintainers) · [Roadmap](#roadmap-and-design-decisions) · [Tests](#running-the-tests) · [License](#license)
+- [Upgrading](#upgrading) · [Releasing](#releasing-maintainers) · [Design decisions](#design-decisions) · [Tests](#running-the-tests) · [License](#license)
 
 ---
 
@@ -619,7 +619,7 @@ Behaviour changes since 1.0 that you may notice:
 | 1.5 | opt-in `ShareScopeBetweenNestedDispatches` |
 | 1.6 | `ILogger.Log(LogSeverity, string)`; module shutdown only for initialized modules |
 | 1.7 | **`Parallel` handlers each get their own scope; command retry is opt-in (`[IdempotentCommand]`)** |
-| 1.8 | outbox `Payload`/`SchemaVersion`/`Headers` and `IOutboxEventSerializer`; `OutboxMessage.Event` is nullable; `UserAction` moved to `MicroserviceMonolith.Adapters.UserActions` (the old `Core.UserActions` types remain as obsolete shims until 2.0) |
+| 1.8 | outbox `Payload`/`SchemaVersion`/`Headers` and `IOutboxEventSerializer`; `OutboxMessage.Event` is nullable; `UserAction` moved to `MicroserviceMonolith.Adapters.UserActions` (the old `Core.UserActions` types remained as obsolete shims until 2.0) |
 | 1.9 | `ModuleBoundaryValidator` |
 | 2.0 | **breaking:** the framework `ILogger`, `LogSeverity`, `ConsoleLogger` and `MicrosoftLoggingAdapter` are removed; middleware, `ModuleManager`, `ExecutionQueue` and `OutboxProcessor` take `Microsoft.Extensions.Logging.ILogger`; the logger is no longer registered in the container and without `AddLogging()` nothing is logged. The obsolete `Core.UserActions` shims are removed (use `MicroserviceMonolith.Adapters.UserActions`) |
 
@@ -637,11 +637,14 @@ Merging to `main` runs CI (build and tests on .NET 8 and 9) but publishes nothin
 
 NuGet versions are immutable: a published version cannot be replaced, only superseded. The workflow can also be started manually (`workflow_dispatch`) when you need to re-run publishing.
 
-## Roadmap and design decisions
+## Design decisions
 
-- **Source-generated registration.** Replacing assembly scanning and the reflection-created invokers with a source generator would allow trimming and Native AOT and cut startup cost. It is a separate project and a good subject for measurement (startup, allocations, dispatch cost); not started.
-- **Boundary analyzer.** `ModuleBoundaryValidator` runs as a test on compiled assemblies. A Roslyn analyzer would report the same violations at edit time.
-- **Durable outbox store.** A ready-made EF Core store as a separate package.
+- **Scope.** An in-process framework for modular monoliths: modules, CQRS buses, events, middleware, an execution queue and an outbox contract. It is not a message broker, an ORM or a service host.
+- **Persistence is yours.** The outbox ships the contract (`IOutboxStore`, `IOutboxEventSerializer`, leasing, retries, dead letters) and an in-memory store for development and tests. A durable store is implemented over your own database, so it can share your unit of work.
+- **Reflection-based discovery.** Handlers and modules are found by assembly scanning at startup, with deterministic order and ambiguity detection. This keeps registration automatic and the API small; the cost is that Native AOT and trimming are not supported.
+- **Boundaries by convention, checked in tests.** `ModuleBoundaryValidator` verifies module boundaries on compiled assemblies. There is no runtime isolation.
+- **Static event types.** Events are dispatched by their exact type, which keeps routing explicit and predictable.
+- **Logging.** The framework uses `Microsoft.Extensions.Logging` directly and adds no logging abstraction of its own.
 
 ## Running the tests
 
