@@ -271,42 +271,30 @@ namespace MicroserviceMonolith.Core.Events
                     if (strategy == EventPublishStrategy.Parallel)
                     {
                         // Every handler is started even if another one throws synchronously, and every failure is reported.
-                        var tasks = decoratedHandlers
-                            .Select(h => InvokeIsolatedAsync(h, cancellationToken))
-                            .ToList();
-
-                        try
-                        {
-                            await Task.WhenAll(tasks);
-                        }
-                        catch
-                        {
-                            // Failures are collected from the individual tasks below.
-                        }
+                        var outcomes = await Task.WhenAll(
+                            decoratedHandlers.Select(h => InvokeIsolatedAsync(h, cancellationToken)));
 
                         var failures = new List<Exception>();
-                        var cancelled = false;
-                        foreach (var task in tasks)
+                        var cancelledByCaller = false;
+                        foreach (var outcome in outcomes)
                         {
-                            if (task.IsFaulted)
+                            if (outcome == null)
                             {
-                                failures.AddRange(task.Exception!.InnerExceptions);
+                                continue;
                             }
-                            else if (task.IsCanceled)
+
+                            if (outcome is OperationCanceledException && cancellationToken.IsCancellationRequested)
                             {
-                                cancelled = true;
+                                cancelledByCaller = true;
+                            }
+                            else
+                            {
+                                failures.Add(outcome);
                             }
                         }
 
-                        if (failures.Count == 1)
-                        {
-                            throw failures[0];
-                        }
-                        if (failures.Count > 1)
-                        {
-                            throw new AggregateException($"Multiple exceptions occurred while publishing event '{typeof(TEvent).Name}'.", failures);
-                        }
-                        if (cancelled)
+                        ThrowFailures(failures);
+                        if (cancelledByCaller)
                         {
                             throw new OperationCanceledException(cancellationToken);
                         }
@@ -321,20 +309,15 @@ namespace MicroserviceMonolith.Core.Events
                                 cancellationToken.ThrowIfCancellationRequested();
                                 await handler(cancellationToken);
                             }
-                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            // Cancellation requested by the caller stops the publication; any other failure (including a
+                            // handler-internal timeout that surfaces as OperationCanceledException) must not stop the other handlers.
+                            catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
                             {
                                 exceptions.Add(ex);
                             }
                         }
 
-                        if (exceptions.Count == 1)
-                        {
-                            throw exceptions[0];
-                        }
-                        if (exceptions.Count > 1)
-                        {
-                            throw new AggregateException($"Multiple exceptions occurred while publishing event '{typeof(TEvent).Name}'.", exceptions);
-                        }
+                        ThrowFailures(exceptions);
                     }
                 };
 
@@ -364,11 +347,34 @@ namespace MicroserviceMonolith.Core.Events
         }
 
         /// <summary>
-        /// Runs a handler so that a synchronous throw becomes a faulted task instead of escaping to the caller.
+        /// Runs a handler and returns its failure instead of throwing, so that neither a synchronous throw nor a
+        /// failed task can stop the other handlers of the same publication from running.
         /// </summary>
-        private static async Task InvokeIsolatedAsync(Func<CancellationToken, Task> handler, CancellationToken cancellationToken)
+        private static async Task<Exception?> InvokeIsolatedAsync(Func<CancellationToken, Task> handler, CancellationToken cancellationToken)
         {
-            await handler(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await handler(cancellationToken).ConfigureAwait(false);
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex;
+            }
+        }
+
+        private static void ThrowFailures(List<Exception> failures)
+        {
+            if (failures.Count == 1)
+            {
+                // Preserves the original stack trace
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            }
+
+            if (failures.Count > 1)
+            {
+                throw new AggregateException("Multiple exceptions occurred while publishing an event.", failures);
+            }
         }
 
         /// <inheritdoc />

@@ -115,7 +115,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
         {
             // Deterministic order (by full name), independent of assembly order and reflection internals
             var allTypes = AssemblyScanning.GetOrderedTypes(assemblies)
-                .Where(t => t.IsClass && !t.IsAbstract && !t.IsInterface)
+                .Where(t => t.IsClass && !t.IsAbstract && !t.IsInterface && !t.ContainsGenericParameters) // open generics cannot be registered as handlers
                 .ToList();
 
             var registeredModuleTypes = new HashSet<Type>(

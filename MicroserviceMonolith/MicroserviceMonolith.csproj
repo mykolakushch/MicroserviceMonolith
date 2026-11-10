@@ -7,7 +7,7 @@
 		<AssemblyName>MicroserviceMonolith</AssemblyName>
 		<RootNamespace>MicroserviceMonolith</RootNamespace>
 		<PackageId>MicroserviceMonolith</PackageId>
-		<Version>1.5.0</Version>
+		<Version>1.5.1</Version>
 		<Authors>Mykola Kusch</Authors>
 		<Company>mnml</Company>
 		<Description>MicroserviceMonolith is a lightweight modular monolith framework for .NET. It provides modules with lifecycle management, in-memory command and query buses (CQRS), an event bus with sequential, parallel and background dispatch strategies, pipeline middlewares (logging, retry, error handling, performance tracking), a background execution queue, an in-memory outbox reference implementation, and Microsoft.Extensions.DependencyInjection integration.</Description>

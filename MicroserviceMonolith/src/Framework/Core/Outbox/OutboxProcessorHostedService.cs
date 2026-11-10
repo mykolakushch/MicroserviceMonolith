@@ -52,6 +52,9 @@ namespace MicroserviceMonolith.Core.Outbox
         /// <inheritdoc />
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            // Let the host finish starting the other hosted services (e.g. module initialization) before polling.
+            await Task.Yield();
+
             using var timer = new PeriodicTimer(_options.PollingInterval);
 
             try
