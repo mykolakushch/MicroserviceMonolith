@@ -35,6 +35,18 @@ namespace MicroserviceMonolith.Core.DependencyInjection
         /// it stops. Set to false if you call <c>ModuleManager.InitializeModulesAsync</c>/<c>ShutdownModulesAsync</c> yourself.
         /// </summary>
         public bool AutoManageModuleLifecycle { get; set; } = true;
+
+        /// <summary>
+        /// When true, commands, queries and events dispatched from inside a handler reuse the DI scope of the
+        /// outermost dispatch, so scoped services (for example a DbContext or unit of work) are shared across
+        /// the whole call chain. Default: false (every dispatch gets its own scope).
+        /// </summary>
+        /// <remarks>
+        /// The outermost dispatch owns and disposes the scope. Handlers of <c>EventPublishStrategy.Parallel</c> run
+        /// concurrently inside the shared scope, so scoped services must be safe for that. Background publications
+        /// always get their own scope.
+        /// </remarks>
+        public bool ShareScopeBetweenNestedDispatches { get; set; } = false;
         public IConfiguration Configuration { get; set; } = new ConfigurationBuilder().Build();
         public ExecutionQueueOptions ExecutionQueueOptions { get; set; } = new();
 

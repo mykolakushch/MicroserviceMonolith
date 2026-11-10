@@ -19,6 +19,7 @@ namespace MicroserviceMonolith.Core.Queries
     {
         private readonly IServiceProvider? _serviceProvider;
         private readonly ICorrelationContextAccessor? _correlationAccessor;
+        private readonly bool _shareScope;
         private readonly ConcurrentDictionary<Type, Func<object, CancellationToken, Task<object?>>> _handlers = new();
         private readonly List<IQueryMiddleware> _middlewares = new();
         private readonly object _middlewareLock = new();
@@ -32,9 +33,22 @@ namespace MicroserviceMonolith.Core.Queries
         }
 
         public QueryBus(IServiceProvider? serviceProvider, ICorrelationContextAccessor? correlationAccessor)
+            : this(serviceProvider, correlationAccessor, false)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance with service provider, correlation context accessor and the scope sharing mode.
+        /// </summary>
+        /// <param name="shareScopeBetweenNestedDispatches">
+        /// When true, commands, queries and events dispatched from inside a handler reuse the DI scope of the
+        /// outermost dispatch instead of creating their own (the outermost dispatch owns and disposes it).
+        /// </param>
+        public QueryBus(IServiceProvider? serviceProvider, ICorrelationContextAccessor? correlationAccessor, bool shareScopeBetweenNestedDispatches)
         {
             _serviceProvider = serviceProvider;
             _correlationAccessor = correlationAccessor;
+            _shareScope = shareScopeBetweenNestedDispatches;
         }
 
         /// <summary>
@@ -89,13 +103,26 @@ namespace MicroserviceMonolith.Core.Queries
             }
 
             IServiceScope? scope = null;
+            AmbientScopeEntry? previousAmbient = null;
             try
             {
                 IServiceProvider? sp = _serviceProvider;
                 if (sp != null)
                 {
-                    scope = sp.CreateScope();
-                    sp = scope.ServiceProvider;
+                    if (_shareScope && AmbientDispatchScope.TryGet(_serviceProvider!, out var sharedScope))
+                    {
+                        // Nested dispatch: reuse the scope of the outermost one
+                        sp = sharedScope;
+                    }
+                    else
+                    {
+                        scope = sp.CreateScope();
+                        sp = scope.ServiceProvider;
+                        if (_shareScope)
+                        {
+                            previousAmbient = AmbientDispatchScope.Set(_serviceProvider!, sp);
+                        }
+                    }
                     allMiddlewares.AddRange(sp.GetServices<IQueryMiddleware>());
                 }
 
@@ -140,7 +167,14 @@ namespace MicroserviceMonolith.Core.Queries
             }
             finally
             {
-                scope?.Dispose();
+                if (scope != null)
+                {
+                    if (_shareScope)
+                    {
+                        AmbientDispatchScope.Restore(previousAmbient);
+                    }
+                    scope.Dispose();
+                }
             }
         }
 

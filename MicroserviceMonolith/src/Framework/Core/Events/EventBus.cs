@@ -31,6 +31,7 @@ namespace MicroserviceMonolith.Core.Events
         private readonly List<IEventHandlerMiddleware> _handlerMiddlewares = new();
         private readonly object _middlewareLock = new();
         private readonly object _subscribersLock = new();
+        private readonly bool _shareScope;
 
         /// <summary>
         /// Initializes a new instance of <see cref="EventBus"/> for manual subscription.
@@ -43,9 +44,22 @@ namespace MicroserviceMonolith.Core.Events
         /// Initializes a new instance of <see cref="EventBus"/> with dependency injection support.
         /// </summary>
         /// <param name="serviceProvider">Optional service provider to resolve event handlers and middlewares.</param>
-        public EventBus(IServiceProvider? serviceProvider)
+        public EventBus(IServiceProvider? serviceProvider) : this(serviceProvider, false)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of <see cref="EventBus"/> with dependency injection support and the scope sharing mode.
+        /// </summary>
+        /// <param name="serviceProvider">Optional service provider to resolve event handlers and middlewares.</param>
+        /// <param name="shareScopeBetweenNestedDispatches">
+        /// When true, a publication made from inside a command, query or event handler reuses the DI scope of the
+        /// outermost dispatch. Background publications always get their own scope.
+        /// </param>
+        public EventBus(IServiceProvider? serviceProvider, bool shareScopeBetweenNestedDispatches)
         {
             _serviceProvider = serviceProvider;
+            _shareScope = shareScopeBetweenNestedDispatches;
         }
 
         /// <summary>
@@ -108,6 +122,7 @@ namespace MicroserviceMonolith.Core.Events
                     // Dispatch via high-performance ExecutionQueue
                     queue.Enqueue(async ct =>
                     {
+                        AmbientDispatchScope.Clear(); // the publishing scope may be gone by now
                         if (ambientCorrelation != null && correlationAccessor != null)
                         {
                             correlationAccessor.CorrelationContext = ambientCorrelation;
@@ -122,6 +137,7 @@ namespace MicroserviceMonolith.Core.Events
                     {
                         try
                         {
+                            AmbientDispatchScope.Clear(); // the publishing scope may be gone by now
                             if (ambientCorrelation != null && correlationAccessor != null)
                             {
                                 correlationAccessor.CorrelationContext = ambientCorrelation;
@@ -158,13 +174,26 @@ namespace MicroserviceMonolith.Core.Events
             }
 
             IServiceScope? scope = null;
+            AmbientScopeEntry? previousAmbient = null;
             try
             {
                 IServiceProvider? sp = _serviceProvider;
                 if (sp != null)
                 {
-                    scope = sp.CreateScope();
-                    sp = scope.ServiceProvider;
+                    if (_shareScope && AmbientDispatchScope.TryGet(_serviceProvider!, out var sharedScope))
+                    {
+                        // Nested dispatch: reuse the scope of the outermost one
+                        sp = sharedScope;
+                    }
+                    else
+                    {
+                        scope = sp.CreateScope();
+                        sp = scope.ServiceProvider;
+                        if (_shareScope)
+                        {
+                            previousAmbient = AmbientDispatchScope.Set(_serviceProvider!, sp);
+                        }
+                    }
 
                     // Resolve DI middlewares
                     var diEventMiddlewares = sp.GetServices<IEventMiddleware>();
@@ -323,7 +352,14 @@ namespace MicroserviceMonolith.Core.Events
             }
             finally
             {
-                scope?.Dispose();
+                if (scope != null)
+                {
+                    if (_shareScope)
+                    {
+                        AmbientDispatchScope.Restore(previousAmbient);
+                    }
+                    scope.Dispose();
+                }
             }
         }
 

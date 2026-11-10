@@ -63,13 +63,13 @@ namespace MicroserviceMonolith.Core.DependencyInjection
             }
 
             // Command Bus with correlation tracking
-            services.TryAddSingleton<ICommandBus>(sp => new CommandBus(sp, sp.GetService<ICorrelationContextAccessor>()));
+            services.TryAddSingleton<ICommandBus>(sp => new CommandBus(sp, sp.GetService<ICorrelationContextAccessor>(), options.ShareScopeBetweenNestedDispatches));
 
             // Query Bus with correlation tracking
-            services.TryAddSingleton<IQueryBus>(sp => new QueryBus(sp, sp.GetService<ICorrelationContextAccessor>()));
+            services.TryAddSingleton<IQueryBus>(sp => new QueryBus(sp, sp.GetService<ICorrelationContextAccessor>(), options.ShareScopeBetweenNestedDispatches));
 
             // Event Bus
-            services.TryAddSingleton<EventBus>(sp => new EventBus(sp));
+            services.TryAddSingleton<EventBus>(sp => new EventBus(sp, options.ShareScopeBetweenNestedDispatches));
             services.TryAddSingleton<IEventPublisher>(sp => sp.GetRequiredService<EventBus>());
             services.TryAddSingleton<IEventSubscriber>(sp => sp.GetRequiredService<EventBus>());
 
