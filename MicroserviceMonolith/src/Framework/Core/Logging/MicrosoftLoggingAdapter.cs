@@ -18,7 +18,20 @@ namespace MicroserviceMonolith.Core.Logging
         /// <inheritdoc />
         public void Log(string message)
         {
-            _logger.LogInformation("{Message}", message);
+            Log(LogSeverity.Information, message);
+        }
+
+        /// <inheritdoc />
+        public void Log(LogSeverity severity, string message)
+        {
+            var level = severity switch
+            {
+                LogSeverity.Debug => LogLevel.Debug,
+                LogSeverity.Warning => LogLevel.Warning,
+                LogSeverity.Error => LogLevel.Error,
+                _ => LogLevel.Information
+            };
+            _logger.Log(level, "{Message}", message);
         }
     }
 }

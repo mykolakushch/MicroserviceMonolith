@@ -92,7 +92,7 @@ namespace MicroserviceMonolith.Core.Outbox
             }
             catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
             {
-                _logger?.Log($"[Outbox] Background processing failed: {ex}");
+                _logger?.Log(LogSeverity.Error, $"[Outbox] Background processing failed: {ex}");
             }
         }
     }

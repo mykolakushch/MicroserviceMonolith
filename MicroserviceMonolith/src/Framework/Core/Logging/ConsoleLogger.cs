@@ -12,9 +12,23 @@ namespace MicroserviceMonolith.Core.Logging
         /// <inheritdoc />
         public void Log(string message)
         {
+            Log(LogSeverity.Information, message);
+        }
+
+        /// <inheritdoc />
+        public void Log(LogSeverity severity, string message)
+        {
+            var tag = severity switch
+            {
+                LogSeverity.Debug => "DBG ",
+                LogSeverity.Warning => "WARN ",
+                LogSeverity.Error => "ERR ",
+                _ => string.Empty
+            };
+
             lock (_consoleLock)
             {
-                Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss.fff}] {message}");
+                Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss.fff}] {tag}{message}");
             }
         }
     }

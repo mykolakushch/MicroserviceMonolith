@@ -41,6 +41,7 @@ namespace MicroserviceMonolith.Core.Outbox
         private readonly IEventPublisher _eventPublisher;
         private readonly ICorrelationContextAccessor? _correlationAccessor;
         private readonly Action<string>? _logAction;
+        private readonly ILogger? _logger;
 
         private static readonly ConcurrentDictionary<Type, PublishInvoker> _publishInvokers = new();
 
@@ -59,8 +60,22 @@ namespace MicroserviceMonolith.Core.Outbox
         }
 
         public OutboxProcessor(IOutboxStore outboxStore, IEventPublisher eventPublisher, ILogger? logger = null)
-            : this(outboxStore, eventPublisher, null, logger != null ? logger.Log : null)
+            : this(outboxStore, eventPublisher, null, logger)
         {
+        }
+
+        /// <summary>
+        /// Creates a processor that logs through the framework <see cref="ILogger"/> (failures and dead-lettering
+        /// are written with <see cref="LogSeverity.Error"/>).
+        /// </summary>
+        public OutboxProcessor(
+            IOutboxStore outboxStore,
+            IEventPublisher eventPublisher,
+            ICorrelationContextAccessor? correlationAccessor,
+            ILogger? logger)
+            : this(outboxStore, eventPublisher, correlationAccessor, (Action<string>?)null)
+        {
+            _logger = logger;
         }
 
         public OutboxProcessor(
@@ -89,6 +104,32 @@ namespace MicroserviceMonolith.Core.Outbox
             _eventPublisher = eventPublisher ?? throw new ArgumentNullException(nameof(eventPublisher));
             _correlationAccessor = correlationAccessor;
             _logAction = logAction;
+        }
+
+        /// <summary>
+        /// Creates a processor that resolves <see cref="IOutboxStore"/> from a new scope for every batch and logs
+        /// through the framework <see cref="ILogger"/>.
+        /// </summary>
+        public OutboxProcessor(
+            IServiceScopeFactory scopeFactory,
+            IEventPublisher eventPublisher,
+            ICorrelationContextAccessor? correlationAccessor,
+            ILogger? logger)
+            : this(scopeFactory, eventPublisher, correlationAccessor, (Action<string>?)null)
+        {
+            _logger = logger;
+        }
+
+        private void LogInfo(string message)
+        {
+            if (_logger != null) _logger.Log(message);
+            else _logAction?.Invoke(message);
+        }
+
+        private void LogError(string message)
+        {
+            if (_logger != null) _logger.Log(LogSeverity.Error, message);
+            else _logAction?.Invoke(message);
         }
 
         /// <inheritdoc />
@@ -147,18 +188,18 @@ namespace MicroserviceMonolith.Core.Outbox
 
                         await store.MarkAsProcessedAsync(message.Id, cancellationToken);
                         processedCount++;
-                        _logAction?.Invoke($"[Outbox] Processed message {message.Id} of type {message.EventType}");
+                        LogInfo($"[Outbox] Processed message {message.Id} of type {message.EventType}");
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
                     {
                         // Cancellation requested by the caller is not a delivery failure and must not consume a retry.
                         var attempts = message.RetryCount + 1;
-                        _logAction?.Invoke($"[Outbox] Failed to process message {message.Id} (attempt {attempts}): {ex}");
+                        LogError($"[Outbox] Failed to process message {message.Id} (attempt {attempts}): {ex}");
                         await store.MarkAsFailedAsync(message.Id, ex.Message, cancellationToken);
 
                         if (attempts >= store.MaxRetries)
                         {
-                            _logAction?.Invoke($"[Outbox] Message {message.Id} of type {message.EventType} exhausted {store.MaxRetries} attempts and is dead-lettered");
+                            LogError($"[Outbox] Message {message.Id} of type {message.EventType} exhausted {store.MaxRetries} attempts and is dead-lettered");
                         }
                     }
                 }

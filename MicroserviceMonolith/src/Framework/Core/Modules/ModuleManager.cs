@@ -60,7 +60,7 @@ namespace MicroserviceMonolith.Core.Modules
         }
 
         /// <summary>
-        /// Discovers module types from assemblies and invokes their <see cref="IModule.ConfigureServices"/> methods.
+        /// Discovers module classes (public or not, abstract and open generic types excluded) from assemblies and invokes their <see cref="IModule.ConfigureServices"/> methods.
         /// Registers the discovered modules as singletons in the service collection.
         /// </summary>
         public void ConfigureModules(IServiceCollection services, IConfiguration configuration, params Assembly[] assemblies)
@@ -99,7 +99,7 @@ namespace MicroserviceMonolith.Core.Modules
         private static List<Type> DiscoverModuleTypes(Assembly[] assemblies)
         {
             return AssemblyScanning.GetOrderedTypes(assemblies)
-                .Where(t => typeof(IModule).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface && (t.IsPublic || t.IsNestedPublic))
+                .Where(t => typeof(IModule).IsAssignableFrom(t) && t.IsClass && !t.IsAbstract && !t.ContainsGenericParameters)
                 .ToList();
         }
 
@@ -126,6 +126,10 @@ namespace MicroserviceMonolith.Core.Modules
             {
                 AddModule(module);
                 await module.InitializeAsync();
+                lock (_lock)
+                {
+                    _initialized.Add(module);
+                }
             }
         }
 
@@ -168,7 +172,7 @@ namespace MicroserviceMonolith.Core.Modules
         }
 
         /// <summary>
-        /// Shuts down all registered modules in reverse order of initialization (dependents before their dependencies).
+        /// Shuts down the initialized modules in reverse order of initialization (dependents before their dependencies). Modules that were never initialized are skipped.
         /// </summary>
         public async Task ShutdownModulesAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default)
         {
@@ -184,6 +188,10 @@ namespace MicroserviceMonolith.Core.Modules
                     // Invalid dependency graph: shutdown must still run, fall back to registration order.
                     modulesToShutdown = _modules.ToList();
                 }
+
+                // Only modules that were actually initialized are shut down (a module whose startup never ran,
+                // or failed, has nothing to release).
+                modulesToShutdown = modulesToShutdown.Where(m => _initialized.Contains(m)).ToList();
             }
 
             // Shutdown in reverse (LIFO) order, so dependents stop before the modules they depend on
@@ -205,7 +213,7 @@ namespace MicroserviceMonolith.Core.Modules
                 catch (Exception ex)
                 {
                     // Continue shutting down remaining modules even if one fails, but do not hide the failure
-                    _logger?.Log($"[ModuleManager] Shutdown of module '{module.Name}' failed: {ex}");
+                    _logger?.Log(LogSeverity.Error, $"[ModuleManager] Shutdown of module '{module.Name}' failed: {ex}");
                 }
             }
 

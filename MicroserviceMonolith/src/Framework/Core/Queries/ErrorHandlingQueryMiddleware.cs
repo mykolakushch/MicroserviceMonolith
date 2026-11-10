@@ -15,7 +15,7 @@ namespace MicroserviceMonolith.Core.Queries
         public ErrorHandlingQueryMiddleware(ILogger logger)
         {
             if (logger == null) throw new ArgumentNullException(nameof(logger));
-            _logErrorAction = (msg, ex) => logger.Log($"[Query] {msg}: {ex}");
+            _logErrorAction = (msg, ex) => logger.Log(LogSeverity.Error, $"[Query] {msg}: {ex}");
         }
 
         public ErrorHandlingQueryMiddleware(Microsoft.Extensions.Logging.ILogger<ErrorHandlingQueryMiddleware> logger)

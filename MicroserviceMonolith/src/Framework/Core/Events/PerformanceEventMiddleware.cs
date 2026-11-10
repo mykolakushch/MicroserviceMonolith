@@ -18,7 +18,7 @@ namespace MicroserviceMonolith.Core.Events
         {
             _threshold = threshold;
             if (logger == null) throw new ArgumentNullException(nameof(logger));
-            _logAction = logger.Log;
+            _logAction = m => logger.Log(LogSeverity.Warning, m);
         }
 
         public PerformanceEventMiddleware(TimeSpan threshold, Action<string> logAction)

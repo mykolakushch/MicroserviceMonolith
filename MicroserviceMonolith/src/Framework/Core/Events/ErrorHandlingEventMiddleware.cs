@@ -15,7 +15,7 @@ namespace MicroserviceMonolith.Core.Events
         public ErrorHandlingEventMiddleware(ILogger logger)
         {
             if (logger == null) throw new ArgumentNullException(nameof(logger));
-            _logErrorAction = (msg, ex) => logger.Log($"[Event] {msg}: {ex}");
+            _logErrorAction = (msg, ex) => logger.Log(LogSeverity.Error, $"[Event] {msg}: {ex}");
         }
 
         public ErrorHandlingEventMiddleware(Microsoft.Extensions.Logging.ILogger<ErrorHandlingEventMiddleware> logger)

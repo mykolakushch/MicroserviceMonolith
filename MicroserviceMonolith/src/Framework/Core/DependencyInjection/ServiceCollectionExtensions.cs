@@ -51,7 +51,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
             services.TryAddSingleton(sp => new ExecutionQueue(
                 options.ExecutionQueueOptions,
                 sp.GetService<ICorrelationContextAccessor>(),
-                (msg, ex) => sp.GetService<ILogger>()?.Log($"[ExecutionQueue] {msg}: {ex}")));
+                (msg, ex) => sp.GetService<ILogger>()?.Log(LogSeverity.Error, $"[ExecutionQueue] {msg}: {ex}")));
 
             // Module Manager
             services.TryAddSingleton(sp => new ModuleManager(sp.GetService<ILogger>()));
@@ -83,7 +83,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                     sp.GetRequiredService<IServiceScopeFactory>(),
                     sp.GetRequiredService<IEventPublisher>(),
                     sp.GetService<ICorrelationContextAccessor>(),
-                    sp.GetService<ILogger>() != null ? sp.GetRequiredService<ILogger>().Log : null));
+                    sp.GetService<ILogger>()));
                 services.TryAddScoped<IOutboxWriter>(sp => new OutboxWriter(
                     sp.GetRequiredService<IOutboxStore>(),
                     sp.GetService<ICorrelationContextAccessor>()));

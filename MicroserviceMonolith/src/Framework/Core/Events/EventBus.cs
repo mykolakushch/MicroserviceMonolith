@@ -147,7 +147,7 @@ namespace MicroserviceMonolith.Core.Events
                         catch (Exception ex)
                         {
                             var logger = sp?.GetService<ILogger>();
-                            logger?.Log($"[EventBus Background Error] Failed to publish {@event.GetType().Name}: {ex}");
+                            logger?.Log(LogSeverity.Error, $"[EventBus Background Error] Failed to publish {@event.GetType().Name}: {ex}");
                         }
                     }, CancellationToken.None);
                 }

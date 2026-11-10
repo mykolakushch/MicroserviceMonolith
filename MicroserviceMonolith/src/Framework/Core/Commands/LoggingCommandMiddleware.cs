@@ -12,12 +12,14 @@ namespace MicroserviceMonolith.Core.Commands
     public class LoggingCommandMiddleware : ICommandMiddleware
     {
         private readonly Action<string> _logAction;
+        private readonly Action<string> _failureAction;
         private readonly ICorrelationContextAccessor? _correlationAccessor;
 
         public LoggingCommandMiddleware(ILogger logger, ICorrelationContextAccessor? correlationAccessor = null)
         {
             if (logger == null) throw new ArgumentNullException(nameof(logger));
             _logAction = logger.Log;
+            _failureAction = m => logger.Log(LogSeverity.Error, m);
             _correlationAccessor = correlationAccessor;
         }
 
@@ -27,12 +29,14 @@ namespace MicroserviceMonolith.Core.Commands
         {
             if (logger == null) throw new ArgumentNullException(nameof(logger));
             _logAction = msg => Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(logger, "{Message}", msg);
+            _failureAction = msg => Microsoft.Extensions.Logging.LoggerExtensions.LogError(logger, "{Message}", msg);
             _correlationAccessor = correlationAccessor;
         }
 
         public LoggingCommandMiddleware(Action<string> logAction, ICorrelationContextAccessor? correlationAccessor = null)
         {
             _logAction = logAction ?? throw new ArgumentNullException(nameof(logAction));
+            _failureAction = _logAction;
             _correlationAccessor = correlationAccessor;
         }
 
@@ -56,7 +60,7 @@ namespace MicroserviceMonolith.Core.Commands
             }
             catch (Exception ex)
             {
-                _logAction($"{prefix}[Command] Failed {commandName}: {ex}");
+                _failureAction($"{prefix}[Command] Failed {commandName}: {ex.GetType().Name}: {ex.Message}");
                 throw;
             }
         }

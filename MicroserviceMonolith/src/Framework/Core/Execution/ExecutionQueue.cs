@@ -52,7 +52,7 @@ namespace MicroserviceMonolith.Core.Execution
         /// Initializes a new instance of <see cref="ExecutionQueue"/> with an optional logger.
         /// </summary>
         public ExecutionQueue(ILogger? logger)
-            : this(new ExecutionQueueOptions(), null, logger != null ? (msg, ex) => logger.Log($"[ExecutionQueue] {msg}: {ex}") : null)
+            : this(new ExecutionQueueOptions(), null, logger != null ? (msg, ex) => logger.Log(LogSeverity.Error, $"[ExecutionQueue] {msg}: {ex}") : null)
         {
         }
 
