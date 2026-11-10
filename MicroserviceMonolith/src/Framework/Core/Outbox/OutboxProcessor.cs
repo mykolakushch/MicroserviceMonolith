@@ -150,7 +150,7 @@ namespace MicroserviceMonolith.Core.Outbox
                 {
                     // Cancellation requested by the caller is not a delivery failure and must not consume a retry.
                     var attempts = message.RetryCount + 1;
-                    _logAction?.Invoke($"[Outbox] Failed to process message {message.Id} (attempt {attempts}): {ex.Message}");
+                    _logAction?.Invoke($"[Outbox] Failed to process message {message.Id} (attempt {attempts}): {ex}");
                     await store.MarkAsFailedAsync(message.Id, ex.Message, cancellationToken);
 
                     if (attempts >= store.MaxRetries)

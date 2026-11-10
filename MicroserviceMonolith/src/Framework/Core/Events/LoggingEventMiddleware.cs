@@ -55,7 +55,7 @@ namespace MicroserviceMonolith.Core.Events
             }
             catch (Exception ex)
             {
-                _logAction($"{prefix}[Event] Failed {eventName}: {ex.Message}");
+                _logAction($"{prefix}[Event] Failed {eventName}: {ex}");
                 throw;
             }
         }

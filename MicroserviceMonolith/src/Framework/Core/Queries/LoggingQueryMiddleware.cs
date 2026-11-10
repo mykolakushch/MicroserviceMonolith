@@ -56,7 +56,7 @@ namespace MicroserviceMonolith.Core.Queries
             }
             catch (Exception ex)
             {
-                _logAction($"{prefix}[Query] Failed {queryName}: {ex.Message}");
+                _logAction($"{prefix}[Query] Failed {queryName}: {ex}");
                 throw;
             }
         }

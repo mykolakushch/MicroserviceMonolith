@@ -56,7 +56,7 @@ namespace MicroserviceMonolith.Core.Commands
             }
             catch (Exception ex)
             {
-                _logAction($"{prefix}[Command] Failed {commandName}: {ex.Message}");
+                _logAction($"{prefix}[Command] Failed {commandName}: {ex}");
                 throw;
             }
         }

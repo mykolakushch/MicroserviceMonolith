@@ -52,7 +52,7 @@ namespace MicroserviceMonolith.Core.Execution
         /// Initializes a new instance of <see cref="ExecutionQueue"/> with an optional logger.
         /// </summary>
         public ExecutionQueue(ILogger? logger)
-            : this(new ExecutionQueueOptions(), null, logger != null ? (msg, ex) => logger.Log($"[ExecutionQueue] {msg}: {ex.Message}") : null)
+            : this(new ExecutionQueueOptions(), null, logger != null ? (msg, ex) => logger.Log($"[ExecutionQueue] {msg}: {ex}") : null)
         {
         }
 
@@ -99,9 +99,19 @@ namespace MicroserviceMonolith.Core.Execution
                 _channel = Channel.CreateUnbounded<Func<CancellationToken, Task>>(unboundedOptions);
             }
 
-            for (int i = 0; i < options.WorkerCount; i++)
+            // Workers are long-lived: do not let them capture the AsyncLocal state (for example the correlation
+            // context) of whichever caller happened to construct the queue.
+            AsyncFlowControl? flowControl = ExecutionContext.IsFlowSuppressed() ? null : ExecutionContext.SuppressFlow();
+            try
             {
-                _workers.Add(Task.Run(ProcessQueueAsync));
+                for (int i = 0; i < options.WorkerCount; i++)
+                {
+                    _workers.Add(Task.Run(ProcessQueueAsync));
+                }
+            }
+            finally
+            {
+                flowControl?.Undo();
             }
         }
 

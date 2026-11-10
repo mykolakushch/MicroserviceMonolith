@@ -34,7 +34,15 @@ namespace MicroserviceMonolith.Core.DependencyInjection
             configure?.Invoke(options);
 
             // Logging
-            services.TryAddSingleton<ILogger, ConsoleLogger>();
+            // Uses Microsoft.Extensions.Logging when an ILoggerFactory is registered (e.g. in a generic host),
+            // otherwise falls back to the console.
+            services.TryAddSingleton<ILogger>(sp =>
+            {
+                var factory = sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>();
+                return factory != null
+                    ? new MicrosoftLoggingAdapter(factory.CreateLogger("MicroserviceMonolith"))
+                    : new ConsoleLogger();
+            });
 
             // Context Accessor
             services.TryAddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
@@ -43,7 +51,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
             services.TryAddSingleton(sp => new ExecutionQueue(
                 options.ExecutionQueueOptions,
                 sp.GetService<ICorrelationContextAccessor>(),
-                (msg, ex) => sp.GetService<ILogger>()?.Log($"[ExecutionQueue] {msg}: {ex.Message}")));
+                (msg, ex) => sp.GetService<ILogger>()?.Log($"[ExecutionQueue] {msg}: {ex}")));
 
             // Module Manager
             services.TryAddSingleton(sp => new ModuleManager(sp.GetService<ILogger>()));

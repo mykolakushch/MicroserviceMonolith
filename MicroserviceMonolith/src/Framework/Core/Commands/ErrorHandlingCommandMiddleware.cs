@@ -15,7 +15,7 @@ namespace MicroserviceMonolith.Core.Commands
         public ErrorHandlingCommandMiddleware(ILogger logger)
         {
             if (logger == null) throw new ArgumentNullException(nameof(logger));
-            _logErrorAction = (msg, ex) => logger.Log($"[Command] {msg}: {ex.Message}");
+            _logErrorAction = (msg, ex) => logger.Log($"[Command] {msg}: {ex}");
         }
 
         public ErrorHandlingCommandMiddleware(Microsoft.Extensions.Logging.ILogger<ErrorHandlingCommandMiddleware> logger)
