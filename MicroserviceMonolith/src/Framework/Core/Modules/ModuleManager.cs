@@ -6,6 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using MicroserviceMonolith.Core.Common;
+using MicroserviceMonolith.Core.Logging;
 
 namespace MicroserviceMonolith.Core.Modules
 {
@@ -17,6 +19,16 @@ namespace MicroserviceMonolith.Core.Modules
         private readonly List<IModule> _modules = new();
         private readonly HashSet<IModule> _initialized = new();
         private readonly object _lock = new();
+        private readonly ILogger? _logger;
+
+        /// <summary>
+        /// Initializes a new instance of <see cref="ModuleManager"/>.
+        /// </summary>
+        /// <param name="logger">Optional logger used to report module shutdown failures.</param>
+        public ModuleManager(ILogger? logger = null)
+        {
+            _logger = logger;
+        }
 
         /// <summary>
         /// Gets a read-only list of all registered modules.
@@ -58,20 +70,15 @@ namespace MicroserviceMonolith.Core.Modules
                 assemblies = new[] { Assembly.GetCallingAssembly() };
             }
 
-            var moduleTypes = assemblies.SelectMany(a => a.GetTypes())
-                .Where(t => typeof(IModule).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface && (t.IsPublic || t.IsNestedPublic));
-
-            foreach (var type in moduleTypes)
+            var created = new List<IModule>();
+            foreach (var type in DiscoverModuleTypes(assemblies))
             {
                 // Instantiate module using default constructor if available
                 if (type.GetConstructor(Type.EmptyTypes) != null)
                 {
-                    var instance = (IModule?)Activator.CreateInstance(type);
-                    if (instance != null)
+                    if (Activator.CreateInstance(type) is IModule instance)
                     {
-                        AddModule(instance);
-                        services.AddSingleton(typeof(IModule), instance);
-                        instance.ConfigureServices(services, configuration);
+                        created.Add(instance);
                     }
                 }
                 else
@@ -79,6 +86,21 @@ namespace MicroserviceMonolith.Core.Modules
                     services.AddSingleton(typeof(IModule), type);
                 }
             }
+
+            // Configure dependencies first (see ModuleDependsOnAttribute)
+            foreach (var instance in ModuleDependencyOrder.Sort(created, requireAllDependencies: false))
+            {
+                AddModule(instance);
+                services.AddSingleton(typeof(IModule), instance);
+                instance.ConfigureServices(services, configuration);
+            }
+        }
+
+        private static List<Type> DiscoverModuleTypes(Assembly[] assemblies)
+        {
+            return AssemblyScanning.GetOrderedTypes(assemblies)
+                .Where(t => typeof(IModule).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface && (t.IsPublic || t.IsNestedPublic))
+                .ToList();
         }
 
         /// <summary>
@@ -91,21 +113,25 @@ namespace MicroserviceMonolith.Core.Modules
                 assemblies = new[] { Assembly.GetCallingAssembly() };
             }
 
-            var moduleTypes = assemblies.SelectMany(a => a.GetTypes())
-                .Where(t => typeof(IModule).IsAssignableFrom(t) && !t.IsAbstract && !t.IsInterface && (t.IsPublic || t.IsNestedPublic));
-
-            foreach (var type in moduleTypes)
+            var created = new List<IModule>();
+            foreach (var type in DiscoverModuleTypes(assemblies))
             {
                 if (type.GetConstructor(Type.EmptyTypes) != null && Activator.CreateInstance(type) is IModule module)
                 {
-                    AddModule(module);
-                    await module.InitializeAsync();
+                    created.Add(module);
                 }
+            }
+
+            foreach (var module in ModuleDependencyOrder.Sort(created, requireAllDependencies: false))
+            {
+                AddModule(module);
+                await module.InitializeAsync();
             }
         }
 
         /// <summary>
-        /// Initializes all registered modules using the provided <see cref="IServiceProvider"/>.
+        /// Initializes all registered modules using the provided <see cref="IServiceProvider"/>, dependencies
+        /// (see <see cref="ModuleDependsOnAttribute"/>) first.
         /// Also discovers any <see cref="IModule"/> registered inside the DI container.
         /// Each module is initialized at most once until <see cref="ShutdownModulesAsync"/> runs, so calling this
         /// method manually in addition to the automatic hosted service does not initialize modules twice.
@@ -124,7 +150,10 @@ namespace MicroserviceMonolith.Core.Modules
             List<IModule> modulesToInit;
             lock (_lock)
             {
-                modulesToInit = _modules.Where(m => !_initialized.Contains(m)).ToList();
+                // Dependencies first; modules without dependencies keep their registration order
+                modulesToInit = ModuleDependencyOrder.Sort(_modules, requireAllDependencies: true)
+                    .Where(m => !_initialized.Contains(m))
+                    .ToList();
             }
 
             foreach (var module in modulesToInit)
@@ -139,17 +168,25 @@ namespace MicroserviceMonolith.Core.Modules
         }
 
         /// <summary>
-        /// Shuts down all registered modules in reverse order of initialization.
+        /// Shuts down all registered modules in reverse order of initialization (dependents before their dependencies).
         /// </summary>
         public async Task ShutdownModulesAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default)
         {
             List<IModule> modulesToShutdown;
             lock (_lock)
             {
-                modulesToShutdown = _modules.ToList();
+                try
+                {
+                    modulesToShutdown = ModuleDependencyOrder.Sort(_modules, requireAllDependencies: false);
+                }
+                catch (InvalidOperationException)
+                {
+                    // Invalid dependency graph: shutdown must still run, fall back to registration order.
+                    modulesToShutdown = _modules.ToList();
+                }
             }
 
-            // Shutdown in reverse (LIFO) order
+            // Shutdown in reverse (LIFO) order, so dependents stop before the modules they depend on
             modulesToShutdown.Reverse();
 
             foreach (var module in modulesToShutdown)
@@ -165,9 +202,10 @@ namespace MicroserviceMonolith.Core.Modules
                         await module.ShutdownAsync();
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Continue shutting down remaining modules even if one fails
+                    // Continue shutting down remaining modules even if one fails, but do not hide the failure
+                    _logger?.Log($"[ModuleManager] Shutdown of module '{module.Name}' failed: {ex}");
                 }
             }
 

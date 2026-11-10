@@ -46,7 +46,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                 (msg, ex) => sp.GetService<ILogger>()?.Log($"[ExecutionQueue] {msg}: {ex.Message}")));
 
             // Module Manager
-            services.TryAddSingleton<ModuleManager>();
+            services.TryAddSingleton(sp => new ModuleManager(sp.GetService<ILogger>()));
 
             // Tie module initialization/shutdown to the host lifetime
             if (options.AutoManageModuleLifecycle)
@@ -105,7 +105,8 @@ namespace MicroserviceMonolith.Core.DependencyInjection
             IEnumerable<Assembly> assemblies,
             IConfiguration configuration)
         {
-            var allTypes = assemblies.SelectMany(a => a.GetTypes())
+            // Deterministic order (by full name), independent of assembly order and reflection internals
+            var allTypes = AssemblyScanning.GetOrderedTypes(assemblies)
                 .Where(t => t.IsClass && !t.IsAbstract && !t.IsInterface)
                 .ToList();
 
@@ -114,18 +115,21 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                         .Select(s => s.ImplementationType ?? s.ImplementationInstance?.GetType())
                         .Where(t => t != null)!);
 
-            // Phase 1: Discover and configure all modules first so their custom services (including factories) are registered
+            // Phase 1: Discover and configure all modules first so their custom services (including factories) are registered.
+            // Modules are configured dependencies first (see ModuleDependsOnAttribute).
+            var newModules = new List<IModule>();
             foreach (var type in allTypes.Where(t => typeof(IModule).IsAssignableFrom(t) && t.GetConstructor(Type.EmptyTypes) != null))
             {
-                if (registeredModuleTypes.Add(type))
+                if (registeredModuleTypes.Add(type) && Activator.CreateInstance(type) is IModule moduleInstance)
                 {
-                    var moduleInstance = (IModule?)Activator.CreateInstance(type);
-                    if (moduleInstance != null)
-                    {
-                        services.AddSingleton(typeof(IModule), moduleInstance);
-                        moduleInstance.ConfigureServices(services, configuration);
-                    }
+                    newModules.Add(moduleInstance);
                 }
+            }
+
+            foreach (var moduleInstance in ModuleDependencyOrder.Sort(newModules, requireAllDependencies: false))
+            {
+                services.AddSingleton(typeof(IModule), moduleInstance);
+                moduleInstance.ConfigureServices(services, configuration);
             }
 
             // Phase 2: Index all already-registered single-handler interfaces (from factory, instance, or type) in O(1) set
@@ -136,6 +140,28 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                      s.ServiceType.GetGenericTypeDefinition() == typeof(ICommandHandler<,>) ||
                      s.ServiceType.GetGenericTypeDefinition() == typeof(IQueryHandler<,>)))
                     .Select(s => s.ServiceType));
+
+            // Handler interface -> the scanned class that claimed it. Two scanned classes claiming the same
+            // single-handler interface is ambiguous (previously the first one silently won).
+            var scannedOwners = new Dictionary<Type, Type>();
+
+            bool TryClaim(Type handlerInterface, Type implementation)
+            {
+                if (registeredSingleHandlerTypes.Contains(handlerInterface))
+                {
+                    if (scannedOwners.TryGetValue(handlerInterface, out var owner) && owner != implementation)
+                    {
+                        throw new InvalidOperationException(
+                            $"Ambiguous handler registration: both '{owner.FullName}' and '{implementation.FullName}' " +
+                            $"implement '{handlerInterface}'. A command or query can have only one handler.");
+                    }
+                    return false; // already registered by a factory/instance/module, or by this very class
+                }
+
+                registeredSingleHandlerTypes.Add(handlerInterface);
+                scannedOwners[handlerInterface] = implementation;
+                return true;
+            }
 
             // Index (ServiceType, ImplementationType) pairs to prevent duplicate event handler registrations
             var registeredDescriptors = new HashSet<(Type ServiceType, Type ImplementationType)>(
@@ -148,14 +174,14 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                 // Register ICommandHandler<TCommand> and ICommandHandler<TCommand, Unit>
                 foreach (var iface in type.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(ICommandHandler<>)))
                 {
-                    if (registeredSingleHandlerTypes.Add(iface) && registeredDescriptors.Add((iface, type)))
+                    if (TryClaim(iface, type) && registeredDescriptors.Add((iface, type)))
                     {
                         services.AddTransient(iface, type);
 
                         // Register zero-reflection Unit handler
                         var cmdType = iface.GetGenericArguments()[0];
                         var unitHandlerType = typeof(ICommandHandler<,>).MakeGenericType(cmdType, typeof(Unit));
-                        if (registeredSingleHandlerTypes.Add(unitHandlerType) && registeredDescriptors.Add((unitHandlerType, type)))
+                        if (TryClaim(unitHandlerType, type) && registeredDescriptors.Add((unitHandlerType, type)))
                         {
                             services.AddTransient(unitHandlerType, type);
                         }
@@ -165,7 +191,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                 // Register ICommandHandler<TCommand, TResult>
                 foreach (var iface in type.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(ICommandHandler<,>)))
                 {
-                    if (registeredSingleHandlerTypes.Add(iface) && registeredDescriptors.Add((iface, type)))
+                    if (TryClaim(iface, type) && registeredDescriptors.Add((iface, type)))
                     {
                         services.AddTransient(iface, type);
                     }
@@ -174,7 +200,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                 // Register IQueryHandler<TQuery, TResult>
                 foreach (var iface in type.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IQueryHandler<,>)))
                 {
-                    if (registeredSingleHandlerTypes.Add(iface) && registeredDescriptors.Add((iface, type)))
+                    if (TryClaim(iface, type) && registeredDescriptors.Add((iface, type)))
                     {
                         services.AddTransient(iface, type);
                     }
