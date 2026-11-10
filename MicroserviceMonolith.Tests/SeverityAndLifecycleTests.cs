@@ -9,11 +9,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MicroserviceMonolith.Core.Commands;
 using MicroserviceMonolith.Core.Events;
-using MicroserviceMonolith.Core.Logging;
 using MicroserviceMonolith.Core.Modules;
 using MicroserviceMonolith.Core.Outbox;
 using Xunit;
-using FrameworkLogger = MicroserviceMonolith.Core.Logging.ILogger;
 
 namespace MicroserviceMonolith.Tests
 {
@@ -24,39 +22,6 @@ namespace MicroserviceMonolith.Tests
 
     public class SeverityAndLifecycleTests
     {
-        private sealed class SeverityLogger : FrameworkLogger
-        {
-            public ConcurrentQueue<(LogSeverity Severity, string Message)> Entries { get; } = new();
-
-            public void Log(string message) => Entries.Enqueue((LogSeverity.Information, message));
-
-            public void Log(LogSeverity severity, string message) => Entries.Enqueue((severity, message));
-        }
-
-        private sealed class MessageOnlyLogger : FrameworkLogger
-        {
-            public List<string> Messages { get; } = new();
-
-            public void Log(string message) => Messages.Add(message);
-        }
-
-        private sealed class CapturingMelLogger : Microsoft.Extensions.Logging.ILogger
-        {
-            public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = new();
-
-            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-
-            public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
-
-            public void Log<TState>(
-                Microsoft.Extensions.Logging.LogLevel logLevel,
-                Microsoft.Extensions.Logging.EventId eventId,
-                TState state,
-                Exception? exception,
-                Func<TState, Exception?, string> formatter)
-                => Entries.Add((logLevel, formatter(state, exception)));
-        }
-
         private sealed class NamedModule : ModuleBase
         {
             private readonly string _label;
@@ -82,37 +47,11 @@ namespace MicroserviceMonolith.Tests
         }
 
         [Fact]
-        public void SeverityOverload_FallsBackToLogString_ForLoggersThatOnlyImplementIt()
-        {
-            var logger = new MessageOnlyLogger();
-            FrameworkLogger asInterface = logger;
-
-            asInterface.Log(LogSeverity.Error, "something failed");
-
-            logger.Messages.Should().Equal("something failed");
-        }
-
-        [Theory]
-        [InlineData(LogSeverity.Debug, Microsoft.Extensions.Logging.LogLevel.Debug)]
-        [InlineData(LogSeverity.Information, Microsoft.Extensions.Logging.LogLevel.Information)]
-        [InlineData(LogSeverity.Warning, Microsoft.Extensions.Logging.LogLevel.Warning)]
-        [InlineData(LogSeverity.Error, Microsoft.Extensions.Logging.LogLevel.Error)]
-        public void MicrosoftLoggingAdapter_MapsSeverityToLogLevel(LogSeverity severity, Microsoft.Extensions.Logging.LogLevel expected)
-        {
-            var mel = new CapturingMelLogger();
-            FrameworkLogger adapter = new MicrosoftLoggingAdapter(mel);
-
-            adapter.Log(severity, "hello");
-
-            mel.Entries.Should().ContainSingle().Which.Should().Be((expected, "hello"));
-        }
-
-        [Fact]
         public async Task LoggingMiddleware_LogsAShortFailureLine_AtErrorSeverity_ErrorHandlingLogsTheFullException()
         {
-            var logger = new SeverityLogger();
-            var logging = new LoggingCommandMiddleware((FrameworkLogger)logger);
-            var errors = new ErrorHandlingCommandMiddleware((FrameworkLogger)logger);
+            var logger = new TestLogger();
+            var logging = new LoggingCommandMiddleware(logger);
+            var errors = new ErrorHandlingCommandMiddleware(logger);
             var command = new CommandBusTests.TestResultCommand(0, 0);
             Func<Task<int>> failing = () => throw new InvalidOperationException("boom");
 
@@ -125,11 +64,12 @@ namespace MicroserviceMonolith.Tests
 
             var entries = logger.Entries.ToArray();
             var failed = entries.Single(e => e.Message.Contains("Failed"));
-            failed.Severity.Should().Be(LogSeverity.Error);
+            failed.Level.Should().Be(Microsoft.Extensions.Logging.LogLevel.Error);
             failed.Message.Should().Contain("InvalidOperationException: boom").And.NotContain(Environment.NewLine);
 
             var full = entries.Single(e => e.Message.Contains("Error in"));
-            full.Severity.Should().Be(LogSeverity.Error);
+            full.Level.Should().Be(Microsoft.Extensions.Logging.LogLevel.Error);
+            full.Exception.Should().BeOfType<InvalidOperationException>();
         }
 
         [Fact]
@@ -138,8 +78,8 @@ namespace MicroserviceMonolith.Tests
             var store = new InMemoryOutboxStore { MaxRetries = 1, RetryBaseDelay = TimeSpan.Zero };
             var bus = new EventBus();
             bus.Subscribe<OutboxReliabilityTests.ReliabilityEvent>(_ => throw new InvalidOperationException("handler failed"));
-            var logger = new SeverityLogger();
-            var processor = new OutboxProcessor(store, bus, null, (FrameworkLogger)logger);
+            var logger = new TestLogger();
+            var processor = new OutboxProcessor(store, bus, null, logger);
             await store.SaveAsync(new OutboxMessage
             {
                 EventType = nameof(OutboxReliabilityTests.ReliabilityEvent),
@@ -149,8 +89,8 @@ namespace MicroserviceMonolith.Tests
             await processor.ProcessBatchAsync();
 
             var entries = logger.Entries.ToArray();
-            entries.Should().Contain(e => e.Severity == LogSeverity.Error && e.Message.Contains("Failed to process message"));
-            entries.Should().Contain(e => e.Severity == LogSeverity.Error && e.Message.Contains("dead-lettered"));
+            entries.Should().Contain(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Error && e.Message.Contains("Failed to process message"));
+            entries.Should().Contain(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Error && e.Message.Contains("dead-lettered"));
         }
 
         [Fact]

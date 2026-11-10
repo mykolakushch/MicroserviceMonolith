@@ -1,7 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 
 namespace MicroserviceMonolith.Core.Commands
 {
@@ -15,13 +15,7 @@ namespace MicroserviceMonolith.Core.Commands
         public ErrorHandlingCommandMiddleware(ILogger logger)
         {
             if (logger == null) throw new ArgumentNullException(nameof(logger));
-            _logErrorAction = (msg, ex) => logger.Log(LogSeverity.Error, $"[Command] {msg}: {ex}");
-        }
-
-        public ErrorHandlingCommandMiddleware(Microsoft.Extensions.Logging.ILogger<ErrorHandlingCommandMiddleware> logger)
-        {
-            if (logger == null) throw new ArgumentNullException(nameof(logger));
-            _logErrorAction = (msg, ex) => Microsoft.Extensions.Logging.LoggerExtensions.LogError(logger, ex, "{Message}", msg);
+            _logErrorAction = (msg, ex) => logger.LogError(ex, "[Command] {Message}", msg);
         }
 
         public ErrorHandlingCommandMiddleware(Action<string, Exception> logErrorAction)

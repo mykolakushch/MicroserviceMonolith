@@ -202,7 +202,7 @@ It does **not** see usage that is hidden by reflection or string-based resolutio
 
 ## Logging
 
-The framework logs through a small `ILogger` abstraction with `Log(string)` and `Log(LogSeverity, string)`. Failures are written as `Error`, slow-operation warnings as `Warning`. `AddMicroserviceMonolith` registers it on top of `Microsoft.Extensions.Logging` when an `ILoggerFactory` is in the container (a generic host always has one, and severity maps to `LogLevel`), and otherwise falls back to a console logger. Register your own `ILogger` before calling `AddMicroserviceMonolith` to replace either.
+The framework logs through `Microsoft.Extensions.Logging` (since 2.0 there is no separate logger abstraction). Failures are written at `Error`, slow-operation warnings at `Warning`, and the exception is passed to the logger as an exception, not only as text. Components that log on their own (module shutdown, the execution queue, the outbox processor and its background service, the background event strategy) resolve an `ILoggerFactory` from the container. Without logging registered (`services.AddLogging()` or a generic host) they stay silent.
 
 The logging middleware writes a one-line failure summary (`Type: message`); the error-handling middleware writes the full exception with its stack trace, so adding both does not log the same stack twice.
 
@@ -391,20 +391,20 @@ public class BillingModule : ModuleBase { /* ... */ }
 Register middlewares in DI (they apply to every dispatch of that kind) or add them to a bus instance with `AddMiddleware`.
 
 ```csharp
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 
 services.AddSingleton<ICommandMiddleware>(sp => new LoggingCommandMiddleware(
-    sp.GetRequiredService<MicroserviceMonolith.Core.Logging.ILogger>(),
+    sp.GetRequiredService<ILogger<ICommandMiddleware>>(),
     sp.GetService<ICorrelationContextAccessor>()));
 
 services.AddSingleton<ICommandMiddleware>(sp => new PerformanceCommandMiddleware(
-    TimeSpan.FromMilliseconds(500), sp.GetRequiredService<MicroserviceMonolith.Core.Logging.ILogger>()));
+    TimeSpan.FromMilliseconds(500), sp.GetRequiredService<ILogger<ICommandMiddleware>>()));
 
 services.AddSingleton<ICommandMiddleware>(sp => new ErrorHandlingCommandMiddleware(
-    sp.GetRequiredService<MicroserviceMonolith.Core.Logging.ILogger>()));
+    sp.GetRequiredService<ILogger<ICommandMiddleware>>()));
 ```
 
-Use the factory form shown here: the middlewares have several constructors (framework logger, `Microsoft.Extensions.Logging`, plain delegate) and plain `AddSingleton<ICommandMiddleware, LoggingCommandMiddleware>()` can be ambiguous. Equivalent `*QueryMiddleware` and `*EventMiddleware` types exist. Order = registration order, first is outermost.
+Use the factory form shown here: the middlewares have several constructors (`Microsoft.Extensions.Logging.ILogger`, plain delegate) and plain `AddSingleton<ICommandMiddleware, LoggingCommandMiddleware>()` can be ambiguous. Equivalent `*QueryMiddleware` and `*EventMiddleware` types exist. Order = registration order, first is outermost.
 
 ### Retry, and why commands are different
 
@@ -559,16 +559,7 @@ A failure lists every violation, for example: `Module 'Billing' uses 'Shop.Order
 
 ## 13. Logging
 
-Nothing to configure in a generic host: framework messages go to your `Microsoft.Extensions.Logging` providers, errors at `Error` level. Outside a host the console logger is used. To implement your own sink:
-
-```csharp
-public sealed class MyLogger : MicroserviceMonolith.Core.Logging.ILogger
-{
-    public void Log(string message) { /* info */ }
-    public void Log(LogSeverity severity, string message) { /* leveled */ }   // optional: defaults to Log(message)
-}
-services.AddSingleton<MicroserviceMonolith.Core.Logging.ILogger, MyLogger>();   // before AddMicroserviceMonolith
-```
+Nothing to configure in a generic host: framework messages go to your `Microsoft.Extensions.Logging` providers. Outside a host call `services.AddLogging(...)` yourself, for example with a console provider. The middlewares take any `Microsoft.Extensions.Logging.ILogger` (or a plain `Action<string>` delegate), so your own sink is simply an `ILoggerProvider`.
 
 ## 14. Testing code that uses the framework
 
@@ -630,6 +621,7 @@ Behaviour changes since 1.0 that you may notice:
 | 1.7 | **`Parallel` handlers each get their own scope; command retry is opt-in (`[IdempotentCommand]`)** |
 | 1.8 | outbox `Payload`/`SchemaVersion`/`Headers` and `IOutboxEventSerializer`; `OutboxMessage.Event` is nullable; `UserAction` moved to `MicroserviceMonolith.Adapters.UserActions` (the old `Core.UserActions` types remain as obsolete shims until 2.0) |
 | 1.9 | `ModuleBoundaryValidator` |
+| 2.0 | **breaking:** the framework `ILogger`, `LogSeverity`, `ConsoleLogger` and `MicrosoftLoggingAdapter` are removed; middleware, `ModuleManager`, `ExecutionQueue` and `OutboxProcessor` take `Microsoft.Extensions.Logging.ILogger`; the logger is no longer registered in the container and without `AddLogging()` nothing is logged. The obsolete `Core.UserActions` shims are removed (use `MicroserviceMonolith.Adapters.UserActions`) |
 
 ## Releasing (maintainers)
 
@@ -638,8 +630,8 @@ Merging to `main` runs CI (build and tests on .NET 8 and 9) but publishes nothin
 1. Set `<Version>` in `MicroserviceMonolith/MicroserviceMonolith.csproj` (every change that is pushed bumps it) and merge to `main` with green CI.
 2. Tag the merge commit with exactly that version and push the tag:
    ```sh
-   git tag v1.9.0
-   git push origin v1.9.0
+   git tag v2.0.0
+   git push origin v2.0.0
    ```
 3. The `Release and Publish` workflow verifies that the tag equals the csproj version, builds in Release, runs the tests, packs, publishes the package to **NuGet.org** (OIDC trusted publishing, no stored API key) and to GitHub Packages, and then creates the GitHub Release with generated notes and the binaries zip.
 
@@ -647,11 +639,9 @@ NuGet versions are immutable: a published version cannot be replaced, only super
 
 ## Roadmap and design decisions
 
-- **Framework `ILogger`.** It duplicates `Microsoft.Extensions.Logging.ILogger`. It is kept in 1.x because it gives a zero-dependency fallback and removing it is a breaking change. 2.0 is expected to log directly through `Microsoft.Extensions.Logging` and drop the abstraction.
 - **Source-generated registration.** Replacing assembly scanning and the reflection-created invokers with a source generator would allow trimming and Native AOT and cut startup cost. It is a separate project and a good subject for measurement (startup, allocations, dispatch cost); not started.
 - **Boundary analyzer.** `ModuleBoundaryValidator` runs as a test on compiled assemblies. A Roslyn analyzer would report the same violations at edit time.
 - **Durable outbox store.** A ready-made EF Core store as a separate package.
-- **2.0.** Removal of the obsolete `Core.UserActions` shims and of the framework `ILogger`.
 
 ## Running the tests
 

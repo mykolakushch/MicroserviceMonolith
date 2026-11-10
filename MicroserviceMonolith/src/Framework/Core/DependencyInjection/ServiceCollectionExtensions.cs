@@ -11,7 +11,7 @@ using MicroserviceMonolith.Core.Common;
 using MicroserviceMonolith.Core.Context;
 using MicroserviceMonolith.Core.Events;
 using MicroserviceMonolith.Core.Execution;
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 using MicroserviceMonolith.Core.Modules;
 using MicroserviceMonolith.Core.Outbox;
 using MicroserviceMonolith.Core.Queries;
@@ -33,17 +33,6 @@ namespace MicroserviceMonolith.Core.DependencyInjection
             var options = new MicroserviceMonolithOptions();
             configure?.Invoke(options);
 
-            // Logging
-            // Uses Microsoft.Extensions.Logging when an ILoggerFactory is registered (e.g. in a generic host),
-            // otherwise falls back to the console.
-            services.TryAddSingleton<ILogger>(sp =>
-            {
-                var factory = sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>();
-                return factory != null
-                    ? new MicrosoftLoggingAdapter(factory.CreateLogger("MicroserviceMonolith"))
-                    : new ConsoleLogger();
-            });
-
             // Context Accessor
             services.TryAddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
 
@@ -51,10 +40,10 @@ namespace MicroserviceMonolith.Core.DependencyInjection
             services.TryAddSingleton(sp => new ExecutionQueue(
                 options.ExecutionQueueOptions,
                 sp.GetService<ICorrelationContextAccessor>(),
-                (msg, ex) => sp.GetService<ILogger>()?.Log(LogSeverity.Error, $"[ExecutionQueue] {msg}: {ex}")));
+                (msg, ex) => sp.GetService<ILoggerFactory>()?.CreateLogger("MicroserviceMonolith")?.LogError(ex, "[ExecutionQueue] {Message}", msg)));
 
             // Module Manager
-            services.TryAddSingleton(sp => new ModuleManager(sp.GetService<ILogger>()));
+            services.TryAddSingleton(sp => new ModuleManager(sp.GetService<ILoggerFactory>()?.CreateLogger("MicroserviceMonolith")));
 
             // Tie module initialization/shutdown to the host lifetime
             if (options.AutoManageModuleLifecycle)
@@ -83,7 +72,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
                     sp.GetRequiredService<IServiceScopeFactory>(),
                     sp.GetRequiredService<IEventPublisher>(),
                     sp.GetService<ICorrelationContextAccessor>(),
-                    sp.GetService<ILogger>())
+                    sp.GetService<ILoggerFactory>()?.CreateLogger("MicroserviceMonolith"))
                 {
                     EventSerializer = sp.GetService<IOutboxEventSerializer>()
                 });

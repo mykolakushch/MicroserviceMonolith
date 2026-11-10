@@ -9,7 +9,6 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using MicroserviceMonolith.Core.Commands;
 using MicroserviceMonolith.Core.DependencyInjection;
-using MicroserviceMonolith.Core.Logging;
 using MicroserviceMonolith.Core.Modules;
 using Xunit;
 
@@ -63,13 +62,6 @@ namespace MicroserviceMonolith.Tests
                 => throw new InvalidOperationException("boom");
         }
 
-        private sealed class ListLogger : ILogger
-        {
-            public ConcurrentQueue<string> Messages { get; } = new();
-
-            public void Log(string message) => Messages.Enqueue(message);
-        }
-
         private static IServiceProvider EmptyProvider() => new ServiceCollection().BuildServiceProvider();
 
         [Fact]
@@ -119,7 +111,7 @@ namespace MicroserviceMonolith.Tests
         public async Task Shutdown_FailureIsLogged_AndRemainingModulesStillShutDown()
         {
             var events = new List<string>();
-            var logger = new ListLogger();
+            var logger = new TestLogger();
             var manager = new ModuleManager(logger);
             manager.AddModule(new ModA(events));
             manager.AddModule(new FailingOnShutdown(events));
@@ -129,7 +121,7 @@ namespace MicroserviceMonolith.Tests
             await manager.ShutdownModulesAsync(sp); // must not throw
 
             events.Should().Contain("ModA:Shutdown");
-            logger.Messages.Should().ContainSingle(m => m.Contains("FailingOnShutdown") && m.Contains("boom"));
+            logger.Entries.Should().ContainSingle(e => e.Message.Contains("FailingOnShutdown") && e.Exception != null && e.Exception.Message == "boom");
         }
 
         [Fact]

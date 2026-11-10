@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MicroserviceMonolith.Core.Common;
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 
 namespace MicroserviceMonolith.Core.Modules
 {
@@ -213,7 +213,7 @@ namespace MicroserviceMonolith.Core.Modules
                 catch (Exception ex)
                 {
                     // Continue shutting down remaining modules even if one fails, but do not hide the failure
-                    _logger?.Log(LogSeverity.Error, $"[ModuleManager] Shutdown of module '{module.Name}' failed: {ex}");
+                    _logger?.LogError(ex, "[ModuleManager] Shutdown of module '{Module}' failed", module.Name);
                 }
             }
 

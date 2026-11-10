@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using MicroserviceMonolith.Core.Context;
 using MicroserviceMonolith.Core.Events;
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 
 namespace MicroserviceMonolith.Core.Outbox
 {
@@ -71,8 +71,7 @@ namespace MicroserviceMonolith.Core.Outbox
         }
 
         /// <summary>
-        /// Creates a processor that logs through the framework <see cref="ILogger"/> (failures and dead-lettering
-        /// are written with <see cref="LogSeverity.Error"/>).
+        /// Creates a processor that logs through the <see cref="ILogger"/> (failures and dead-lettering are logged as errors).
         /// </summary>
         public OutboxProcessor(
             IOutboxStore outboxStore,
@@ -114,7 +113,7 @@ namespace MicroserviceMonolith.Core.Outbox
 
         /// <summary>
         /// Creates a processor that resolves <see cref="IOutboxStore"/> from a new scope for every batch and logs
-        /// through the framework <see cref="ILogger"/>.
+        /// through the <see cref="ILogger"/>.
         /// </summary>
         public OutboxProcessor(
             IServiceScopeFactory scopeFactory,
@@ -145,13 +144,13 @@ namespace MicroserviceMonolith.Core.Outbox
 
         private void LogInfo(string message)
         {
-            if (_logger != null) _logger.Log(message);
+            if (_logger != null) _logger.LogInformation("{Message}", message);
             else _logAction?.Invoke(message);
         }
 
         private void LogError(string message)
         {
-            if (_logger != null) _logger.Log(LogSeverity.Error, message);
+            if (_logger != null) _logger.LogError("{Message}", message);
             else _logAction?.Invoke(message);
         }
 

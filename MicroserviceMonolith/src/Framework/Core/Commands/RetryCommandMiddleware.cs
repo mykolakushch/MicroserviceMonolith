@@ -2,7 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 
 namespace MicroserviceMonolith.Core.Commands
 {
@@ -29,7 +29,7 @@ namespace MicroserviceMonolith.Core.Commands
         private static readonly ConcurrentDictionary<Type, bool> IdempotentTypes = new();
 
         public RetryCommandMiddleware(int maxRetries, ILogger logger)
-            : this(maxRetries, TimeSpan.FromMilliseconds(50), 2.0, true, null, logger.Log)
+            : this(maxRetries, TimeSpan.FromMilliseconds(50), 2.0, true, null, m => logger.LogWarning("{Message}", m))
         {
         }
 

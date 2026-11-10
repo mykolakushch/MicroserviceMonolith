@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using MicroserviceMonolith.Core.Commands;
 using MicroserviceMonolith.Core.Events;
-using MicroserviceMonolith.Core.Logging;
 using MicroserviceMonolith.Core.Queries;
 using Xunit;
 
@@ -17,7 +16,7 @@ namespace MicroserviceMonolith.Tests
         public record FlakyEvent : EventBase;
         public record FlakyQuery : IQuery<int>;
 
-        private class FakeLogger : ILogger
+        private class FakeLogger
         {
             public List<string> Messages { get; } = new();
             public void Log(string message) => Messages.Add(message);
@@ -173,7 +172,7 @@ namespace MicroserviceMonolith.Tests
         [Fact]
         public async Task PerformanceCommandMiddleware_LogsWarningWhenExceedsThreshold()
         {
-            var logger = new FakeLogger();
+            var logger = new TestLogger();
             var middleware = new PerformanceCommandMiddleware(TimeSpan.FromMilliseconds(20), logger);
 
             await middleware.InvokeAsync(
@@ -185,13 +184,13 @@ namespace MicroserviceMonolith.Tests
                 },
                 CancellationToken.None);
 
-            logger.Messages.Should().ContainSingle(m => m.Contains("took") && m.Contains("Performance Warning"));
+            logger.Entries.Should().ContainSingle(e => e.Level == Microsoft.Extensions.Logging.LogLevel.Warning && e.Message.Contains("took") && e.Message.Contains("Performance Warning"));
         }
 
         [Fact]
         public async Task ErrorHandlingCommandMiddleware_LogsErrorAndRethrows()
         {
-            var logger = new FakeLogger();
+            var logger = new TestLogger();
             var middleware = new ErrorHandlingCommandMiddleware(logger);
 
             Func<Task> act = async () => await middleware.InvokeAsync<CommandBusTests.TestResultCommand, int>(
@@ -200,7 +199,7 @@ namespace MicroserviceMonolith.Tests
                 CancellationToken.None);
 
             await act.Should().ThrowAsync<ApplicationException>().WithMessage("Boom");
-            logger.Messages.Should().ContainSingle(m => m.Contains("Boom"));
+            logger.Entries.Should().ContainSingle(e => e.Exception != null && e.Exception.Message == "Boom");
         }
     }
 }

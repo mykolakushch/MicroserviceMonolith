@@ -1,7 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 
 namespace MicroserviceMonolith.Core.Events
 {
@@ -15,13 +15,7 @@ namespace MicroserviceMonolith.Core.Events
         public ErrorHandlingEventMiddleware(ILogger logger)
         {
             if (logger == null) throw new ArgumentNullException(nameof(logger));
-            _logErrorAction = (msg, ex) => logger.Log(LogSeverity.Error, $"[Event] {msg}: {ex}");
-        }
-
-        public ErrorHandlingEventMiddleware(Microsoft.Extensions.Logging.ILogger<ErrorHandlingEventMiddleware> logger)
-        {
-            if (logger == null) throw new ArgumentNullException(nameof(logger));
-            _logErrorAction = (msg, ex) => Microsoft.Extensions.Logging.LoggerExtensions.LogError(logger, ex, "{Message}", msg);
+            _logErrorAction = (msg, ex) => logger.LogError(ex, "[Event] {Message}", msg);
         }
 
         public ErrorHandlingEventMiddleware(Action<string, Exception> logErrorAction)

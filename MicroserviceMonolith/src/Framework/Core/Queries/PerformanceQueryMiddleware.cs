@@ -2,7 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 
 namespace MicroserviceMonolith.Core.Queries
 {
@@ -18,7 +18,7 @@ namespace MicroserviceMonolith.Core.Queries
         {
             _threshold = threshold;
             if (logger == null) throw new ArgumentNullException(nameof(logger));
-            _logAction = m => logger.Log(LogSeverity.Warning, m);
+            _logAction = m => logger.LogWarning("{Message}", m);
         }
 
         public PerformanceQueryMiddleware(TimeSpan threshold, Action<string> logAction)

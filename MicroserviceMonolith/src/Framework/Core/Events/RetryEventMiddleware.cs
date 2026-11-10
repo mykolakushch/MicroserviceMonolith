@@ -1,7 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 
 namespace MicroserviceMonolith.Core.Events
 {
@@ -20,7 +20,7 @@ namespace MicroserviceMonolith.Core.Events
         private readonly Action<string> _logAction;
 
         public RetryEventMiddleware(int maxRetries, ILogger logger)
-            : this(maxRetries, TimeSpan.FromMilliseconds(50), 2.0, true, null, logger.Log)
+            : this(maxRetries, TimeSpan.FromMilliseconds(50), 2.0, true, null, m => logger.LogWarning("{Message}", m))
         {
         }
 

@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using MicroserviceMonolith.Core.Context;
 using MicroserviceMonolith.Core.Execution;
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 
 namespace MicroserviceMonolith.Core.Events
 {
@@ -146,8 +146,8 @@ namespace MicroserviceMonolith.Core.Events
                         }
                         catch (Exception ex)
                         {
-                            var logger = sp?.GetService<ILogger>();
-                            logger?.Log(LogSeverity.Error, $"[EventBus Background Error] Failed to publish {@event.GetType().Name}: {ex}");
+                            var logger = sp?.GetService<ILoggerFactory>()?.CreateLogger<EventBus>();
+                            logger?.LogError(ex, "[EventBus Background Error] Failed to publish {EventType}", @event.GetType().Name);
                         }
                     }, CancellationToken.None);
                 }

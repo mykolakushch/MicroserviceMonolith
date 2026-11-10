@@ -4,7 +4,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using MicroserviceMonolith.Core.Context;
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 
 namespace MicroserviceMonolith.Core.Execution
 {
@@ -52,7 +52,7 @@ namespace MicroserviceMonolith.Core.Execution
         /// Initializes a new instance of <see cref="ExecutionQueue"/> with an optional logger.
         /// </summary>
         public ExecutionQueue(ILogger? logger)
-            : this(new ExecutionQueueOptions(), null, logger != null ? (msg, ex) => logger.Log(LogSeverity.Error, $"[ExecutionQueue] {msg}: {ex}") : null)
+            : this(new ExecutionQueueOptions(), null, logger != null ? (msg, ex) => logger.LogError(ex, "[ExecutionQueue] {Message}", msg) : null)
         {
         }
 

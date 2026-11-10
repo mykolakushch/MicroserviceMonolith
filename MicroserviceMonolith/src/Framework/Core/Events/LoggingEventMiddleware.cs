@@ -2,7 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using MicroserviceMonolith.Core.Context;
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 
 namespace MicroserviceMonolith.Core.Events
 {
@@ -15,21 +15,13 @@ namespace MicroserviceMonolith.Core.Events
         private readonly Action<string> _failureAction;
         private readonly ICorrelationContextAccessor? _correlationAccessor;
 
-        public LoggingEventMiddleware(ILogger logger, ICorrelationContextAccessor? correlationAccessor = null)
-        {
-            if (logger == null) throw new ArgumentNullException(nameof(logger));
-            _logAction = logger.Log;
-            _failureAction = m => logger.Log(LogSeverity.Error, m);
-            _correlationAccessor = correlationAccessor;
-        }
-
         public LoggingEventMiddleware(
-            Microsoft.Extensions.Logging.ILogger<LoggingEventMiddleware> logger,
+            ILogger logger,
             ICorrelationContextAccessor? correlationAccessor = null)
         {
             if (logger == null) throw new ArgumentNullException(nameof(logger));
-            _logAction = msg => Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(logger, "{Message}", msg);
-            _failureAction = msg => Microsoft.Extensions.Logging.LoggerExtensions.LogError(logger, "{Message}", msg);
+            _logAction = msg => logger.LogInformation("{Message}", msg);
+            _failureAction = msg => logger.LogError("{Message}", msg);
             _correlationAccessor = correlationAccessor;
         }
 

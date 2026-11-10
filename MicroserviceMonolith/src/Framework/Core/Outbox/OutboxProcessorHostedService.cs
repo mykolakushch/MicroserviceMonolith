@@ -2,7 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
-using MicroserviceMonolith.Core.Logging;
+using Microsoft.Extensions.Logging;
 
 namespace MicroserviceMonolith.Core.Outbox
 {
@@ -30,9 +30,9 @@ namespace MicroserviceMonolith.Core.Outbox
     {
         private readonly IOutboxProcessor _processor;
         private readonly OutboxProcessingOptions _options;
-        private readonly ILogger? _logger;
+        private readonly ILogger<OutboxProcessorHostedService>? _logger;
 
-        public OutboxProcessorHostedService(IOutboxProcessor processor, OutboxProcessingOptions options, ILogger? logger = null)
+        public OutboxProcessorHostedService(IOutboxProcessor processor, OutboxProcessingOptions options, ILogger<OutboxProcessorHostedService>? logger = null)
         {
             _processor = processor ?? throw new ArgumentNullException(nameof(processor));
             _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -92,7 +92,7 @@ namespace MicroserviceMonolith.Core.Outbox
             }
             catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
             {
-                _logger?.Log(LogSeverity.Error, $"[Outbox] Background processing failed: {ex}");
+                _logger?.LogError(ex, "[Outbox] Background processing failed");
             }
         }
     }

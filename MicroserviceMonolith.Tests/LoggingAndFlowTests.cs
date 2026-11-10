@@ -7,26 +7,18 @@ using Microsoft.Extensions.DependencyInjection;
 using MicroserviceMonolith.Core.Commands;
 using MicroserviceMonolith.Core.DependencyInjection;
 using MicroserviceMonolith.Core.Execution;
-using MicroserviceMonolith.Core.Logging;
+using MicroserviceMonolith.Core.Modules;
 using Xunit;
-using FrameworkLogger = MicroserviceMonolith.Core.Logging.ILogger;
 
 namespace MicroserviceMonolith.Tests
 {
     public class LoggingAndFlowTests
     {
-        private sealed class ListLogger : FrameworkLogger
-        {
-            public List<string> Messages { get; } = new();
-
-            public void Log(string message) => Messages.Add(message);
-        }
-
         [Fact]
         public async Task ErrorHandlingMiddleware_LogsTheFullException_NotJustTheMessage()
         {
-            var logger = new ListLogger();
-            var middleware = new ErrorHandlingCommandMiddleware((FrameworkLogger)logger);
+            var logger = new TestLogger();
+            var middleware = new ErrorHandlingCommandMiddleware(logger);
 
             Func<Task<int>> failing = () => throw new InvalidOperationException("boom");
             Func<Task> act = () => middleware.InvokeAsync<CommandBusTests.TestResultCommand, int>(
@@ -35,29 +27,20 @@ namespace MicroserviceMonolith.Tests
                 CancellationToken.None);
 
             await act.Should().ThrowAsync<InvalidOperationException>();
-            logger.Messages.Should().ContainSingle()
-                .Which.Should().Contain("System.InvalidOperationException").And.Contain("boom");
+            var entry = logger.Entries.Should().ContainSingle().Subject;
+            entry.Level.Should().Be(Microsoft.Extensions.Logging.LogLevel.Error);
+            entry.Exception.Should().BeOfType<InvalidOperationException>().Which.Message.Should().Be("boom");
         }
 
         [Fact]
-        public void Logger_UsesMicrosoftLogging_WhenALoggerFactoryIsRegistered()
-        {
-            var services = new ServiceCollection();
-            services.AddLogging();
-            services.AddMicroserviceMonolith();
-            using var provider = services.BuildServiceProvider();
-
-            provider.GetRequiredService<FrameworkLogger>().Should().BeOfType<MicrosoftLoggingAdapter>();
-        }
-
-        [Fact]
-        public void Logger_FallsBackToConsole_WithoutALoggerFactory()
+        public void AddMicroserviceMonolith_WorksWithoutLogging_AndDoesNotRegisterALogger()
         {
             var services = new ServiceCollection();
             services.AddMicroserviceMonolith();
             using var provider = services.BuildServiceProvider();
 
-            provider.GetRequiredService<FrameworkLogger>().Should().BeOfType<ConsoleLogger>();
+            provider.GetRequiredService<ModuleManager>().Should().NotBeNull();
+            provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>().Should().BeNull();
         }
 
         [Fact]
