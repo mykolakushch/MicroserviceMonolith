@@ -116,51 +116,62 @@ namespace MicroserviceMonolith.Core.Outbox
         {
             var pendingMessages = await store.GetPendingMessagesAsync(batchSize, cancellationToken);
             int processedCount = 0;
+            var previousCorrelationContext = _correlationAccessor?.CorrelationContext;
 
-            foreach (var message in pendingMessages)
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                try
+                foreach (var message in pendingMessages)
                 {
-                    // Restore the message's correlation context (or clear the previous message's one)
-                    if (_correlationAccessor != null)
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    try
                     {
-                        _correlationAccessor.CorrelationContext = string.IsNullOrWhiteSpace(message.CorrelationId)
-                            ? null
-                            : new CorrelationContext(
-                                message.CorrelationId,
-                                causationId: message.CausationId ?? message.Id.ToString());
+                        // Restore the message's correlation context (or clear the previous message's one)
+                        if (_correlationAccessor != null)
+                        {
+                            _correlationAccessor.CorrelationContext = string.IsNullOrWhiteSpace(message.CorrelationId)
+                                ? null
+                                : new CorrelationContext(
+                                    message.CorrelationId,
+                                    causationId: message.CausationId ?? message.Id.ToString());
+                        }
+
+                        var eventObj = message.Event;
+                        var eventType = eventObj.GetType();
+
+                        // Typed invoker is created once per event type (reflection), then called without reflection
+                        var publishInvoker = _publishInvokers.GetOrAdd(eventType, t =>
+                            (PublishInvoker)Activator.CreateInstance(typeof(PublishInvoker<>).MakeGenericType(t))!);
+
+                        await publishInvoker.InvokeAsync(_eventPublisher, eventObj, cancellationToken);
+
+                        await store.MarkAsProcessedAsync(message.Id, cancellationToken);
+                        processedCount++;
+                        _logAction?.Invoke($"[Outbox] Processed message {message.Id} of type {message.EventType}");
                     }
+                    catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
+                    {
+                        // Cancellation requested by the caller is not a delivery failure and must not consume a retry.
+                        var attempts = message.RetryCount + 1;
+                        _logAction?.Invoke($"[Outbox] Failed to process message {message.Id} (attempt {attempts}): {ex}");
+                        await store.MarkAsFailedAsync(message.Id, ex.Message, cancellationToken);
 
-                    var eventObj = message.Event;
-                    var eventType = eventObj.GetType();
-
-                    // Typed invoker is created once per event type (reflection), then called without reflection
-                    var publishInvoker = _publishInvokers.GetOrAdd(eventType, t =>
-                        (PublishInvoker)Activator.CreateInstance(typeof(PublishInvoker<>).MakeGenericType(t))!);
-
-                    await publishInvoker.InvokeAsync(_eventPublisher, eventObj, cancellationToken);
-
-                    await store.MarkAsProcessedAsync(message.Id, cancellationToken);
-                    processedCount++;
-                    _logAction?.Invoke($"[Outbox] Processed message {message.Id} of type {message.EventType}");
+                        if (attempts >= store.MaxRetries)
+                        {
+                            _logAction?.Invoke($"[Outbox] Message {message.Id} of type {message.EventType} exhausted {store.MaxRetries} attempts and is dead-lettered");
+                        }
+                    }
                 }
-                catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
-                {
-                    // Cancellation requested by the caller is not a delivery failure and must not consume a retry.
-                    var attempts = message.RetryCount + 1;
-                    _logAction?.Invoke($"[Outbox] Failed to process message {message.Id} (attempt {attempts}): {ex}");
-                    await store.MarkAsFailedAsync(message.Id, ex.Message, cancellationToken);
 
-                    if (attempts >= store.MaxRetries)
-                    {
-                        _logAction?.Invoke($"[Outbox] Message {message.Id} of type {message.EventType} exhausted {store.MaxRetries} attempts and is dead-lettered");
-                    }
+                return processedCount;
+            }
+            finally
+            {
+                if (_correlationAccessor != null)
+                {
+                    _correlationAccessor.CorrelationContext = previousCorrelationContext;
                 }
             }
-
-            return processedCount;
         }
     }
 }

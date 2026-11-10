@@ -52,8 +52,8 @@ flowchart TD
     Pipelines --> M3
 
     M1 -.->|Publish Event| EB
-    M1 -.->|"Save to Outbox (explicit call)"| OB
-    OB -.->|"ProcessBatchAsync (caller-driven)"| EB
+    M1 -.->|"AddAsync via IOutboxWriter"| OB
+    OB -.->|"Auto-polled or ProcessBatchAsync"| EB
     EB -.->|Enqueue Background Task| EQ
 ```
 
@@ -64,27 +64,29 @@ flowchart TD
 - **CQRS Architecture**:
   - **Command Bus**: Dispatches commands with or without return values (`ICommand`, `ICommand<TResult>`) to scoped handlers.
   - **Query Bus**: Executes data queries (`IQuery<TResult>`). Read-only behavior is a convention; the framework does not enforce it.
+  - **Optional Scope Sharing**: Set `ShareScopeBetweenNestedDispatches = true` so nested commands, queries, and events reuse the outermost DI scope (e.g., sharing a single `DbContext` / Unit of Work across a call chain).
 - **Event Bus (Pub/Sub)**:
   - Loosely coupled in-memory event publishing (`IEventPublisher`, `IEventSubscriber`).
   - Supports multiple dispatch strategies: `Sequential` (with error isolation), `Parallel` (`Task.WhenAll`), and `Background`.
+  - Separates overall publication middlewares (`IEventMiddleware`) from per-subscriber middlewares (`IEventHandlerMiddleware`) to preserve subscriber idempotency during retries.
   - Thread-safe subscription registry with `IDisposable` tokens for clean unsubscription.
 - **Pipeline Middlewares (Interceptors)**:
   - Russian-doll middleware pipeline for Commands, Queries, and Events.
   - Built-in interceptors (not registered automatically; add the ones you need to the buses or to DI):
-    - **Logging**: Logging through the framework `ILogger` abstraction (an adapter for `Microsoft.Extensions.Logging` is provided).
+    - **Logging**: Logging through the framework `ILogger` abstraction (automatically adapts `Microsoft.Extensions.Logging` when `ILoggerFactory` is registered) with ambient `CorrelationId` tracking.
     - **Retry**: Resilient execution with configurable attempts, exponential backoff, and random jitter.
     - **Performance**: Execution timing with configurable latency warning thresholds.
     - **Error Handling**: Graceful error logging and exception propagation.
-- **Module Lifecycle Management**:
+- **Module Lifecycle & Dependency Management**:
   - Encapsulate features in `IModule` implementations (`ConfigureServices`, `InitializeAsync`, `ShutdownAsync`).
-  - Startup in registration order and reverse (LIFO) shutdown. Order follows module discovery; there is no dependency resolution between modules yet.
-  - Automatic assembly discovery with DI integration.
+  - Declare explicit module dependencies via `[ModuleDependsOn(typeof(OtherModule))]`: modules are configured and initialized in topological dependency order (with circular and missing dependency detection) and shut down in reverse (LIFO) order.
+  - Automatic assembly discovery with deterministic ordering and `IHostedService` lifecycle integration (`AutoManageModuleLifecycle = true`).
   - Module boundaries are a convention: all handlers share one DI container and any module can send commands or queries to any other.
 - **Asynchronous Execution Queue**:
   - Background worker queue powered by `System.Threading.Channels.Channel<T>`.
-  - Supports bounded backpressure modes (`Wait`, `DropOldest`, `DropWrite`) and multi-worker concurrency.
+  - Supports bounded backpressure modes (`Wait`, `DropOldest`, `DropWrite`), multi-worker concurrency, and ambient `CorrelationContext` propagation.
 - **Outbox Pattern (reference implementation)**:
-  - Event dispatching through `IOutboxStore` and `IOutboxProcessor`.
+  - Event dispatching through `IOutboxWriter`, `IOutboxStore`, and `IOutboxProcessor`.
   - The built-in store is in-memory and **not durable**: messages are lost on process exit and writes are not tied to your business transaction. For transactional guarantees, implement `IOutboxStore` over your database and save messages in the same transaction as your data.
   - Add events with `IOutboxWriter.AddAsync(evt)` (scoped; stamps the ambient correlation context). Pending messages are dispatched by a background hosted service that polls the outbox (`AutoProcessOutbox`, `OutboxPollingInterval`, `OutboxBatchSize`); nothing is written to the outbox automatically when you publish an event.
   - `IOutboxStore` may be registered as **scoped** (e.g. a database store sharing the request's unit of work): the processor resolves it from a new scope per batch.
@@ -203,7 +205,7 @@ public class OrderingModule : ModuleBase
     }
 
     // Handlers can be internal to preserve module boundary encapsulation
-    public class CreateOrderHandler : ICommandHandler<CreateOrderCommand, Guid>
+    internal class CreateOrderHandler : ICommandHandler<CreateOrderCommand, Guid>
     {
         private readonly IEventPublisher _eventPublisher;
 
@@ -274,7 +276,7 @@ dotnet run
 
 ## Running Tests
 
-The test suite covers CommandBus, QueryBus, EventBus concurrency, ExecutionQueue channels, ModuleManager lifecycle, Middlewares, Outbox, and DI scanning:
+The test suite covers CommandBus, QueryBus, EventBus concurrency, ExecutionQueue channels, ModuleManager lifecycle and topological dependencies, Middlewares, Outbox reliability, Shared DI Scopes, and DI scanning:
 
 ```sh
 dotnet test
