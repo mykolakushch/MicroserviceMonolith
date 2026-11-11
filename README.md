@@ -1,8 +1,11 @@
 # MicroserviceMonolith
 
+[![CI](https://github.com/mykolakushch/MicroserviceMonolith/actions/workflows/dotnet.yml/badge.svg?branch=main)](https://github.com/mykolakushch/MicroserviceMonolith/actions/workflows/dotnet.yml)
+[![NuGet](https://img.shields.io/nuget/v/MicroserviceMonolith.svg)](https://www.nuget.org/packages/MicroserviceMonolith)
+[![NuGet downloads](https://img.shields.io/nuget/dt/MicroserviceMonolith.svg)](https://www.nuget.org/packages/MicroserviceMonolith)
+[![Release](https://img.shields.io/github/v/release/mykolakushch/MicroserviceMonolith)](https://github.com/mykolakushch/MicroserviceMonolith/releases)
 [![.NET](https://img.shields.io/badge/.NET-8.0%20%7C%209.0%20%7C%2010.0-purple.svg)](https://dotnet.microsoft.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![CI](https://github.com/mykolakushch/MicroserviceMonolith/actions/workflows/dotnet.yml/badge.svg)](https://github.com/mykolakushch/MicroserviceMonolith/actions/workflows/dotnet.yml)
 
 **MicroserviceMonolith** is a lightweight .NET framework for building **modular monoliths**. It combines the operational simplicity of a single process with messaging patterns borrowed from microservices: CQRS buses, in-process events, pipeline middlewares, a background execution queue and an outbox.
 
@@ -636,6 +639,7 @@ Behaviour changes since 1.0 that you may notice:
 | 2.0 | **breaking:** the framework `ILogger`, `LogSeverity`, `ConsoleLogger` and `MicrosoftLoggingAdapter` are removed; middleware, `ModuleManager`, `ExecutionQueue` and `OutboxProcessor` take `Microsoft.Extensions.Logging.ILogger`; the logger is no longer registered in the container and without `AddLogging()` nothing is logged. The obsolete `Core.UserActions` shims are removed (use `MicroserviceMonolith.Adapters.UserActions`) |
 | 2.1 | **breaking:** .NET 10 is supported (net8.0, net9.0, net10.0); the outbox is opt-in (`EnableOutbox` defaults to `false`); the parameterless `IModule.InitializeAsync()`/`ShutdownAsync()` and `ModuleManager.RegisterModulesAsync` are removed (override the `IServiceProvider` overloads); `ModuleManager.ShutdownModulesAsync` requires a service provider; `ExecutionQueue.EnqueueAsync`/`TryEnqueue` follow the same disposed contract as `Enqueue`; queued work items cannot inherit the worker's previous correlation |
 | 2.1.1 | docs and release archive list .NET 10; no code changes |
+| 2.1.2 | docs: CI/NuGet/release badges; the GitHub Packages publish step reports failures instead of hiding them |
 
 ## Releasing (maintainers)
 
@@ -644,8 +648,8 @@ Merging to `main` runs CI (build and tests on .NET 8, 9 and 10) but publishes no
 1. Set `<Version>` in `MicroserviceMonolith/MicroserviceMonolith.csproj` (every change that is pushed bumps it) and merge to `main` with green CI.
 2. Tag the merge commit with exactly that version and push the tag:
    ```sh
-   git tag v2.1.1
-   git push origin v2.1.1
+   git tag v2.1.2
+   git push origin v2.1.2
    ```
 3. The `Release and Publish` workflow verifies that the tag equals the csproj version, builds in Release, runs the tests, packs, publishes the package to **NuGet.org** (OIDC trusted publishing, no stored API key) and to GitHub Packages, and then creates the GitHub Release with generated notes and the binaries zip.
 
