@@ -640,6 +640,7 @@ Behaviour changes since 1.0 that you may notice:
 | 2.1 | **breaking:** .NET 10 is supported (net8.0, net9.0, net10.0); the outbox is opt-in (`EnableOutbox` defaults to `false`); the parameterless `IModule.InitializeAsync()`/`ShutdownAsync()` and `ModuleManager.RegisterModulesAsync` are removed (override the `IServiceProvider` overloads); `ModuleManager.ShutdownModulesAsync` requires a service provider; `ExecutionQueue.EnqueueAsync`/`TryEnqueue` follow the same disposed contract as `Enqueue`; queued work items cannot inherit the worker's previous correlation |
 | 2.1.1 | docs and release archive list .NET 10; no code changes |
 | 2.1.2 | docs: CI/NuGet/release badges; the GitHub Packages publish step reports failures instead of hiding them |
+| 2.1.3 | the GitHub Packages publish step authenticates with a credentialed NuGet source |
 
 ## Releasing (maintainers)
 
@@ -648,8 +649,8 @@ Merging to `main` runs CI (build and tests on .NET 8, 9 and 10) but publishes no
 1. Set `<Version>` in `MicroserviceMonolith/MicroserviceMonolith.csproj` (every change that is pushed bumps it) and merge to `main` with green CI.
 2. Tag the merge commit with exactly that version and push the tag:
    ```sh
-   git tag v2.1.2
-   git push origin v2.1.2
+   git tag v2.1.3
+   git push origin v2.1.3
    ```
 3. The `Release and Publish` workflow verifies that the tag equals the csproj version, builds in Release, runs the tests, packs, publishes the package to **NuGet.org** (OIDC trusted publishing, no stored API key) and to GitHub Packages, and then creates the GitHub Release with generated notes and the binaries zip.
 
