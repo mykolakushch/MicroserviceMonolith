@@ -158,7 +158,7 @@ namespace MicroserviceMonolith.Tests
         public async Task OutboxWriter_StampsCorrelationContext_AndProcessorDeliversFromScopedStore()
         {
             var services = new ServiceCollection();
-            services.AddMicroserviceMonolith(options => options.AutoProcessOutbox = false);
+            services.AddMicroserviceMonolith(options => { options.EnableOutbox = true; options.AutoProcessOutbox = false; });
             using var provider = services.BuildServiceProvider();
 
             var accessor = provider.GetRequiredService<ICorrelationContextAccessor>();
@@ -192,7 +192,7 @@ namespace MicroserviceMonolith.Tests
         public async Task HostedService_DeliversPendingMessagesInTheBackground()
         {
             var services = new ServiceCollection();
-            services.AddMicroserviceMonolith(options => options.OutboxPollingInterval = TimeSpan.FromMilliseconds(20));
+            services.AddMicroserviceMonolith(options => { options.EnableOutbox = true; options.OutboxPollingInterval = TimeSpan.FromMilliseconds(20); });
             using var provider = services.BuildServiceProvider();
 
             var received = new TaskCompletionSource<ReliabilityEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -221,14 +221,19 @@ namespace MicroserviceMonolith.Tests
         public void HostedService_IsRegisteredOnce_AndCanBeDisabled()
         {
             var enabled = new ServiceCollection();
-            enabled.AddMicroserviceMonolith();
-            enabled.AddMicroserviceMonolith();
+            enabled.AddMicroserviceMonolith(o => o.EnableOutbox = true);
+            enabled.AddMicroserviceMonolith(o => o.EnableOutbox = true);
             enabled.Count(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(OutboxProcessorHostedService))
                 .Should().Be(1);
 
             var disabled = new ServiceCollection();
-            disabled.AddMicroserviceMonolith(o => o.AutoProcessOutbox = false);
+            disabled.AddMicroserviceMonolith(o => { o.EnableOutbox = true; o.AutoProcessOutbox = false; });
             disabled.Any(d => d.ImplementationType == typeof(OutboxProcessorHostedService)).Should().BeFalse();
+
+            var byDefault = new ServiceCollection();
+            byDefault.AddMicroserviceMonolith();
+            byDefault.Any(d => d.ServiceType == typeof(IOutboxStore)).Should().BeFalse();
+            byDefault.Any(d => d.ImplementationType == typeof(OutboxProcessorHostedService)).Should().BeFalse();
 
             var noOutbox = new ServiceCollection();
             noOutbox.AddMicroserviceMonolith(o => o.EnableOutbox = false);

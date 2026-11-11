@@ -273,8 +273,8 @@ namespace FrameworkExample
 
             await userAction.DispatchActionAsync("AddToCart", new UserActionContext("WebUI", "PROD-001 (Qty: 2)"));
 
-            // 10. Demonstrate Transactional Outbox
-            Console.WriteLine("\n--- 4. Demonstrating Transactional Outbox Pattern ---");
+            // 10. Demonstrate the Outbox pattern (in-memory reference store)
+            Console.WriteLine("\n--- 4. Demonstrating the Outbox Pattern (in-memory store: not durable, not transactional) ---");
             var outboxStore = serviceProvider.GetRequiredService<IOutboxStore>();
             var outboxProcessor = serviceProvider.GetRequiredService<IOutboxProcessor>();
 

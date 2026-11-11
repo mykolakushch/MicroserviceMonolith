@@ -104,36 +104,6 @@ namespace MicroserviceMonolith.Core.Modules
         }
 
         /// <summary>
-        /// Legacy method: scans assemblies, creates instances, and calls <see cref="IModule.InitializeAsync()"/>.
-        /// </summary>
-        public async Task RegisterModulesAsync(params Assembly[] assemblies)
-        {
-            if (assemblies == null || assemblies.Length == 0)
-            {
-                assemblies = new[] { Assembly.GetCallingAssembly() };
-            }
-
-            var created = new List<IModule>();
-            foreach (var type in DiscoverModuleTypes(assemblies))
-            {
-                if (type.GetConstructor(Type.EmptyTypes) != null && Activator.CreateInstance(type) is IModule module)
-                {
-                    created.Add(module);
-                }
-            }
-
-            foreach (var module in ModuleDependencyOrder.Sort(created, requireAllDependencies: false))
-            {
-                AddModule(module);
-                await module.InitializeAsync();
-                lock (_lock)
-                {
-                    _initialized.Add(module);
-                }
-            }
-        }
-
-        /// <summary>
         /// Initializes all registered modules using the provided <see cref="IServiceProvider"/>, dependencies
         /// (see <see cref="ModuleDependsOnAttribute"/>) first.
         /// Also discovers any <see cref="IModule"/> registered inside the DI container.
@@ -174,8 +144,10 @@ namespace MicroserviceMonolith.Core.Modules
         /// <summary>
         /// Shuts down the initialized modules in reverse order of initialization (dependents before their dependencies). Modules that were never initialized are skipped.
         /// </summary>
-        public async Task ShutdownModulesAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default)
+        public async Task ShutdownModulesAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken = default)
         {
+            if (serviceProvider == null) throw new ArgumentNullException(nameof(serviceProvider));
+
             List<IModule> modulesToShutdown;
             lock (_lock)
             {
@@ -201,14 +173,7 @@ namespace MicroserviceMonolith.Core.Modules
             {
                 try
                 {
-                    if (serviceProvider != null)
-                    {
-                        await module.ShutdownAsync(serviceProvider, cancellationToken);
-                    }
-                    else
-                    {
-                        await module.ShutdownAsync();
-                    }
+                    await module.ShutdownAsync(serviceProvider, cancellationToken);
                 }
                 catch (Exception ex)
                 {

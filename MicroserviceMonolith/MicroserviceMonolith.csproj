@@ -1,13 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
-		<TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+		<TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<GenerateAssemblyInfo>true</GenerateAssemblyInfo>
 		<AssemblyName>MicroserviceMonolith</AssemblyName>
 		<RootNamespace>MicroserviceMonolith</RootNamespace>
 		<PackageId>MicroserviceMonolith</PackageId>
-		<Version>2.0.1</Version>
+		<Version>2.1.0</Version>
 		<Authors>Mykola Kusch</Authors>
 		<Company>mnml</Company>
 		<Description>MicroserviceMonolith is a lightweight modular monolith framework for .NET. It provides modules with lifecycle management, in-memory command and query buses (CQRS), an event bus with sequential, parallel and background dispatch strategies, pipeline middlewares (logging, retry, error handling, performance tracking), a background execution queue, an in-memory outbox reference implementation, and Microsoft.Extensions.DependencyInjection integration.</Description>
@@ -15,7 +15,15 @@
 		<RepositoryUrl>https://github.com/mykolakushch/MicroserviceMonolith</RepositoryUrl>
 		<PackageProjectUrl>https://github.com/mykolakushch/MicroserviceMonolith</PackageProjectUrl>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
-		<PackageTags>modular-monolith;cqrs;event-bus;outbox;microservices;architecture;mediator;ddd</PackageTags>
+		<PackageIcon>icon.png</PackageIcon>
+		<Title>MicroserviceMonolith</Title>
+		<Copyright>Copyright (c) Mykola Kusch</Copyright>
+		<PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+		<RepositoryType>git</RepositoryType>
+		<NeutralLanguage>en</NeutralLanguage>
+		<PackageReleaseNotes>https://github.com/mykolakushch/MicroserviceMonolith/releases</PackageReleaseNotes>
+		<Deterministic>true</Deterministic>
+		<PackageTags>modular-monolith;modules;cqrs;command-bus;query-bus;event-bus;domain-events;outbox;middleware;mediator;architecture;ddd;dotnet</PackageTags>
 		<IncludeSymbols>true</IncludeSymbols>
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -30,6 +38,7 @@
 
 	<ItemGroup>
 		<None Include="..\README.md" Pack="true" PackagePath="\" />
+		<None Include="icon.png" Pack="true" PackagePath="\" />
 	</ItemGroup>
 
 	<ItemGroup>

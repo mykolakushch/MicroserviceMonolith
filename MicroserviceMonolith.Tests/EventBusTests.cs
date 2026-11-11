@@ -183,37 +183,41 @@ namespace MicroserviceMonolith.Tests
         }
 
         [Fact]
-        public async Task PublishAsync_ConcurrentSubscribeAndPublish_ThreadSafe()
+        public async Task PublishAsync_WhileOthersSubscribeAndUnsubscribe_NeverLosesOrDuplicatesEventsForAStableSubscriber()
         {
+            const int publishCount = 2000;
             var bus = new EventBus();
-            var counter = 0;
-            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-
-            var publishTask = Task.Run(async () =>
+            var stableCalls = 0;
+            bus.Subscribe<OrderPlacedEvent>(_ =>
             {
-                while (!cts.IsCancellationRequested)
-                {
-                    await bus.PublishAsync(new OrderPlacedEvent("ORD-CONC", 1m));
-                    await Task.Yield();
-                }
+                Interlocked.Increment(ref stableCalls);
+                return Task.CompletedTask;
             });
 
-            var subscribeTask = Task.Run(async () =>
+            var stop = false;
+            var churn = Task.Run(async () =>
             {
-                while (!cts.IsCancellationRequested)
+                while (!Volatile.Read(ref stop))
                 {
-                    var sub = bus.Subscribe<OrderPlacedEvent>(_ =>
-                    {
-                        Interlocked.Increment(ref counter);
-                        return Task.CompletedTask;
-                    });
+                    var sub = bus.Subscribe<OrderPlacedEvent>(_ => Task.CompletedTask);
                     await Task.Yield();
                     sub.Dispose();
                 }
             });
 
-            await Task.WhenAll(publishTask, subscribeTask);
-            counter.Should().BeGreaterOrEqualTo(0);
+            var publish = Task.Run(async () =>
+            {
+                for (var i = 0; i < publishCount; i++)
+                {
+                    await bus.PublishAsync(new OrderPlacedEvent("ORD-CONC", 1m));
+                }
+            });
+
+            await publish;
+            Volatile.Write(ref stop, true);
+            await churn;
+
+            stableCalls.Should().Be(publishCount);
         }
     }
 }

@@ -39,15 +39,5 @@ namespace MicroserviceMonolith.Core.Modules
         /// <param name="cancellationToken">Cancellation token for the operation.</param>
         /// <returns>A task representing the shutdown operation.</returns>
         Task ShutdownAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken = default);
-
-        /// <summary>
-        /// Legacy parameterless initialization.
-        /// </summary>
-        Task InitializeAsync();
-
-        /// <summary>
-        /// Legacy parameterless shutdown.
-        /// </summary>
-        Task ShutdownAsync();
     }
 }

@@ -38,6 +38,7 @@ namespace MicroserviceMonolith.Tests
 
             services.AddMicroserviceMonolith(options =>
             {
+                options.EnableOutbox = true;
                 options.RegisterServicesFromAssemblies(typeof(DependencyInjectionTests).Assembly);
             });
 

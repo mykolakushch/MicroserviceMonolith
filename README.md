@@ -230,7 +230,7 @@ The logging middleware writes a one-line failure summary (`Type: message`); the 
 dotnet add package MicroserviceMonolith
 ```
 
-Targets .NET 8 and .NET 9. It depends only on `Microsoft.Extensions.*` abstractions (DI, Logging, Configuration, Hosting).
+Targets .NET 8, .NET 9 and .NET 10. It depends only on `Microsoft.Extensions.*` abstractions (DI, Logging, Configuration, Hosting).
 
 ## 1. Register the framework
 
@@ -259,8 +259,8 @@ await builder.Build().RunAsync();
 | `Configuration` | empty | passed to `IModule.ConfigureServices` |
 | `AutoManageModuleLifecycle` | `true` | initialize modules at host start, shut them down at stop |
 | `ShareScopeBetweenNestedDispatches` | `false` | nested dispatches reuse the outer DI scope |
-| `EnableOutbox` | `true` | register the outbox services |
-| `AutoProcessOutbox` | `true` | run the background poller |
+| `EnableOutbox` | `false` | opt in to the outbox: registers the store, writer, processor and (with `AutoProcessOutbox`) the poller |
+| `AutoProcessOutbox` | `true` | with the outbox enabled, run the background poller |
 | `OutboxPollingInterval` | 1 s | pause between polls |
 | `OutboxBatchSize` | 50 | messages per batch |
 | `ExecutionQueueOptions` | see above | capacity, full mode, workers, drain timeout |
@@ -383,6 +383,7 @@ public class OrderingModule : ModuleBase
 public class BillingModule : ModuleBase { /* ... */ }
 ```
 
+- `[ModuleDependsOn]` expresses a **lifecycle** dependency only (start order and reverse shutdown). It is not a place to model business dependencies between modules: those go through the contracts (commands, queries, events), otherwise the modules become structurally coupled.
 - A module found by scanning needs a **public parameterless constructor**. A module that needs constructor dependencies must be registered yourself: `services.AddSingleton<IModule, MyModule>()`.
 - Keep a module's internals in an `Internal` namespace and its cross-module messages (commands, queries, events, DTOs) in a `Contracts` namespace. That is exactly what the boundary test below checks.
 
@@ -469,9 +470,11 @@ public class Mailer
 }
 ```
 
-With a full bounded `Wait` queue `Enqueue` throws; use `await _queue.EnqueueAsync(...)` to wait for room or `TryEnqueue` to test.
+With a full bounded `Wait` queue `Enqueue` throws; use `await _queue.EnqueueAsync(...)` to wait for room or `TryEnqueue` to test. After the queue is disposed `Enqueue` and `EnqueueAsync` throw `ObjectDisposedException` and `TryEnqueue` returns `false`. Every work item runs with exactly the correlation context it was enqueued with (or none); one item's context is never visible to the next.
 
 ## 10. The outbox
+
+The outbox is **opt-in**: nothing outbox-related is registered unless you set `options.EnableOutbox = true`.
 
 ### In-memory (development, tests)
 
@@ -622,16 +625,17 @@ Behaviour changes since 1.0 that you may notice:
 | 1.8 | outbox `Payload`/`SchemaVersion`/`Headers` and `IOutboxEventSerializer`; `OutboxMessage.Event` is nullable; `UserAction` moved to `MicroserviceMonolith.Adapters.UserActions` (the old `Core.UserActions` types remained as obsolete shims until 2.0) |
 | 1.9 | `ModuleBoundaryValidator` |
 | 2.0 | **breaking:** the framework `ILogger`, `LogSeverity`, `ConsoleLogger` and `MicrosoftLoggingAdapter` are removed; middleware, `ModuleManager`, `ExecutionQueue` and `OutboxProcessor` take `Microsoft.Extensions.Logging.ILogger`; the logger is no longer registered in the container and without `AddLogging()` nothing is logged. The obsolete `Core.UserActions` shims are removed (use `MicroserviceMonolith.Adapters.UserActions`) |
+| 2.1 | **breaking:** .NET 10 is supported (net8.0, net9.0, net10.0); the outbox is opt-in (`EnableOutbox` defaults to `false`); the parameterless `IModule.InitializeAsync()`/`ShutdownAsync()` and `ModuleManager.RegisterModulesAsync` are removed (override the `IServiceProvider` overloads); `ModuleManager.ShutdownModulesAsync` requires a service provider; `ExecutionQueue.EnqueueAsync`/`TryEnqueue` follow the same disposed contract as `Enqueue`; queued work items cannot inherit the worker's previous correlation |
 
 ## Releasing (maintainers)
 
-Merging to `main` runs CI (build and tests on .NET 8 and 9) but publishes nothing. A release is made by a tag:
+Merging to `main` runs CI (build and tests on .NET 8, 9 and 10) but publishes nothing. A release is made by a tag:
 
 1. Set `<Version>` in `MicroserviceMonolith/MicroserviceMonolith.csproj` (every change that is pushed bumps it) and merge to `main` with green CI.
 2. Tag the merge commit with exactly that version and push the tag:
    ```sh
-   git tag v2.0.0
-   git push origin v2.0.0
+   git tag v2.1.0
+   git push origin v2.1.0
    ```
 3. The `Release and Publish` workflow verifies that the tag equals the csproj version, builds in Release, runs the tests, packs, publishes the package to **NuGet.org** (OIDC trusted publishing, no stored API key) and to GitHub Packages, and then creates the GitHub Release with generated notes and the binaries zip.
 

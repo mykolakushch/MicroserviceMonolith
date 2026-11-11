@@ -12,7 +12,7 @@ namespace MicroserviceMonolith.Core.DependencyInjection
     public class MicroserviceMonolithOptions
     {
         public List<Assembly> AssembliesToScan { get; } = new();
-        public bool EnableOutbox { get; set; } = true;
+        public bool EnableOutbox { get; set; } = false;
 
         /// <summary>
         /// When true (default) and the outbox is enabled, a hosted service polls the outbox and dispatches pending

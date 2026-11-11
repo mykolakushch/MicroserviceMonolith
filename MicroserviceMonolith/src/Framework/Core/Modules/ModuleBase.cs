@@ -22,19 +22,13 @@ namespace MicroserviceMonolith.Core.Modules
         /// <inheritdoc />
         public virtual Task InitializeAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken = default)
         {
-            return InitializeAsync();
+            return Task.CompletedTask;
         }
 
         /// <inheritdoc />
         public virtual Task ShutdownAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken = default)
         {
-            return ShutdownAsync();
+            return Task.CompletedTask;
         }
-
-        /// <inheritdoc />
-        public virtual Task InitializeAsync() => Task.CompletedTask;
-
-        /// <inheritdoc />
-        public virtual Task ShutdownAsync() => Task.CompletedTask;
     }
 }

@@ -139,10 +139,7 @@ namespace MicroserviceMonolith.Core.Execution
         {
             if (taskGenerator == null) throw new ArgumentNullException(nameof(taskGenerator));
 
-            if (Volatile.Read(ref _isDisposed) != 0)
-            {
-                throw new ObjectDisposedException(nameof(ExecutionQueue));
-            }
+            ThrowIfDisposed();
 
             var wrappedTask = WrapWithCorrelation(taskGenerator);
 
@@ -162,38 +159,76 @@ namespace MicroserviceMonolith.Core.Execution
         }
 
         /// <summary>
-        /// Asynchronously enqueues a task generator to be executed.
+        /// Asynchronously enqueues a task generator, waiting for free capacity when the queue is bounded and full.
         /// </summary>
+        /// <exception cref="ObjectDisposedException">The queue has been disposed (checked before and while waiting).</exception>
         public ValueTask EnqueueAsync(Func<CancellationToken, Task> taskGenerator, CancellationToken cancellationToken = default)
         {
             if (taskGenerator == null) throw new ArgumentNullException(nameof(taskGenerator));
-            return _channel.Writer.WriteAsync(WrapWithCorrelation(taskGenerator), cancellationToken);
+            ThrowIfDisposed();
+            return WriteAsync(WrapWithCorrelation(taskGenerator), cancellationToken);
+        }
+
+        private async ValueTask WriteAsync(Func<CancellationToken, Task> item, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _channel.Writer.WriteAsync(item, cancellationToken).ConfigureAwait(false);
+            }
+            catch (ChannelClosedException) when (Volatile.Read(ref _isDisposed) != 0)
+            {
+                throw new ObjectDisposedException(nameof(ExecutionQueue));
+            }
         }
 
         /// <summary>
         /// Attempts to enqueue a task generator immediately without waiting.
         /// </summary>
+        /// <returns>
+        /// <c>true</c> when the item was accepted; <c>false</c> when a bounded queue is full or the queue has been disposed.
+        /// </returns>
         public bool TryEnqueue(Func<CancellationToken, Task> taskGenerator)
         {
             if (taskGenerator == null) throw new ArgumentNullException(nameof(taskGenerator));
+            if (Volatile.Read(ref _isDisposed) != 0)
+            {
+                return false;
+            }
+
             return _channel.Writer.TryWrite(WrapWithCorrelation(taskGenerator));
         }
 
+        private void ThrowIfDisposed()
+        {
+            if (Volatile.Read(ref _isDisposed) != 0)
+            {
+                throw new ObjectDisposedException(nameof(ExecutionQueue));
+            }
+        }
+
+        // Every work item runs with exactly the correlation it was enqueued with (or none), and the worker's
+        // previous value is restored afterwards, so one item's context can never be seen by the next one.
         private Func<CancellationToken, Task> WrapWithCorrelation(Func<CancellationToken, Task> taskGenerator)
         {
-            var ambientContext = _correlationAccessor?.CorrelationContext;
-            if (ambientContext == null)
+            var accessor = _correlationAccessor;
+            if (accessor == null)
             {
                 return taskGenerator;
             }
 
+            var ambientContext = accessor.CorrelationContext;
             return async ct =>
             {
-                if (_correlationAccessor != null)
+                var previous = accessor.CorrelationContext;
+                accessor.CorrelationContext = ambientContext;
+                try
                 {
-                    _correlationAccessor.CorrelationContext = ambientContext;
+                    await taskGenerator(ct).ConfigureAwait(false);
                 }
-                await taskGenerator(ct);
+                finally
+                {
+                    accessor.CorrelationContext = previous;
+                }
             };
         }
 

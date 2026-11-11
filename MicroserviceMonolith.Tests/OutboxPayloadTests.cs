@@ -117,7 +117,7 @@ namespace MicroserviceMonolith.Tests
         public async Task Writer_StoresStableTypeVersionAndPayload_WhenASerializerIsRegistered()
         {
             var services = new ServiceCollection();
-            services.AddMicroserviceMonolith(o => o.AutoProcessOutbox = false);
+            services.AddMicroserviceMonolith(o => { o.EnableOutbox = true; o.AutoProcessOutbox = false; });
             services.AddSingleton<IOutboxEventSerializer>(
                 new JsonOutboxEventSerializer().Register<PayloadEvent>("payments.payload-event", schemaVersion: 3));
             using var provider = services.BuildServiceProvider();
@@ -137,7 +137,7 @@ namespace MicroserviceMonolith.Tests
         public async Task Writer_WithoutASerializer_KeepsTheClrTypeNameAndNoPayload()
         {
             var services = new ServiceCollection();
-            services.AddMicroserviceMonolith(o => o.AutoProcessOutbox = false);
+            services.AddMicroserviceMonolith(o => { o.EnableOutbox = true; o.AutoProcessOutbox = false; });
             using var provider = services.BuildServiceProvider();
 
             using (var scope = provider.CreateScope())

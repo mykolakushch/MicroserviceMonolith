@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using FluentAssertions;
+using MicroserviceMonolith.Core.Context;
 using MicroserviceMonolith.Core.Execution;
 using Xunit;
 
@@ -192,6 +193,80 @@ namespace MicroserviceMonolith.Tests
             Action act = () => queue.Enqueue(_ => Task.CompletedTask);
 
             act.Should().Throw<ObjectDisposedException>();
+        }
+
+        [Fact]
+        public async Task EnqueueAsync_AfterDispose_ThrowsObjectDisposedException()
+        {
+            var queue = new ExecutionQueue();
+            await queue.DisposeAsync();
+
+            Func<Task> act = async () => await queue.EnqueueAsync(_ => Task.CompletedTask);
+
+            await act.Should().ThrowAsync<ObjectDisposedException>();
+        }
+
+        [Fact]
+        public async Task TryEnqueue_AfterDispose_ReturnsFalse()
+        {
+            var queue = new ExecutionQueue();
+            await queue.DisposeAsync();
+
+            queue.TryEnqueue(_ => Task.CompletedTask).Should().BeFalse();
+        }
+
+        [Fact]
+        public async Task EnqueueAsync_WaitingOnAFullQueue_ThrowsWhenTheQueueIsDisposed()
+        {
+            var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var options = new ExecutionQueueOptions { Capacity = 1, DrainTimeout = TimeSpan.FromMilliseconds(100) };
+            var queue = new ExecutionQueue(options, null, null);
+            var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            queue.Enqueue(async _ =>                       // picked up by the worker, blocks it
+            {
+                started.TrySetResult(true);
+                await gate.Task;
+            });
+            await started.Task;
+            queue.Enqueue(_ => Task.CompletedTask);        // fills the single slot
+
+            var waiting = queue.EnqueueAsync(_ => Task.CompletedTask).AsTask();
+            await Task.Delay(50);
+            waiting.IsCompleted.Should().BeFalse();
+
+            var dispose = queue.DisposeAsync().AsTask();
+            Func<Task> act = () => waiting;
+            await act.Should().ThrowAsync<Exception>().Where(e => e is ObjectDisposedException || e is System.Threading.Channels.ChannelClosedException);
+
+            gate.TrySetResult(true);
+            await dispose;
+        }
+
+        [Fact]
+        public async Task CorrelationContext_OfOneWorkItem_NeverLeaksIntoTheNext()
+        {
+            var accessor = new CorrelationContextAccessor();
+            await using var queue = new ExecutionQueue(new ExecutionQueueOptions { WorkerCount = 1 }, accessor, null);
+            var seen = new ConcurrentQueue<string?>();
+            var done = new CountdownEvent(3);
+
+            Task Record(CancellationToken _)
+            {
+                seen.Enqueue(accessor.CorrelationContext?.CorrelationId);
+                done.Signal();
+                return Task.CompletedTask;
+            }
+
+            accessor.CorrelationContext = new CorrelationContext("A");
+            queue.Enqueue(Record);
+            accessor.CorrelationContext = null;
+            queue.Enqueue(Record);
+            accessor.CorrelationContext = new CorrelationContext("C");
+            queue.Enqueue(Record);
+
+            await Task.Run(() => done.Wait(TimeSpan.FromSeconds(5))).ContinueWith(t => t.Result.Should().BeTrue());
+
+            seen.ToArray().Should().Equal("A", null, "C");
         }
     }
 }
