@@ -69,8 +69,14 @@ jobs:
         # Secondary registry: a failure here must be visible but must not block the NuGet.org release.
         continue-on-error: true
         run: |
+          # GitHub Packages authenticates NuGet pushes with a source that carries credentials.
+          dotnet nuget add source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --name github-packages \
+            --username "${{ github.repository_owner }}" \
+            --password "${{ secrets.GITHUB_TOKEN }}" \
+            --store-password-in-clear-text
           dotnet nuget push ./artifacts/*.nupkg \
-            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --source github-packages \
             --api-key "${{ secrets.GITHUB_TOKEN }}" \
             --skip-duplicate
 
