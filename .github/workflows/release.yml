@@ -66,11 +66,13 @@ jobs:
           cd ./artifacts && zip -r "MicroserviceMonolith-v${VERSION}-binaries.zip" binaries
 
       - name: Publish to GitHub Packages
+        # Secondary registry: a failure here must be visible but must not block the NuGet.org release.
+        continue-on-error: true
         run: |
           dotnet nuget push ./artifacts/*.nupkg \
             --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
             --api-key "${{ secrets.GITHUB_TOKEN }}" \
-            --skip-duplicate || true
+            --skip-duplicate
 
       - name: NuGet Login (OIDC Trusted Publishing)
         uses: NuGet/login@v1
