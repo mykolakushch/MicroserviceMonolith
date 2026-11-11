@@ -58,9 +58,10 @@ jobs:
 
       - name: Prepare binary archive
         run: |
-          mkdir -p ./artifacts/binaries/net8.0 ./artifacts/binaries/net9.0
-          cp -r MicroserviceMonolith/bin/Release/net8.0/* ./artifacts/binaries/net8.0/
-          cp -r MicroserviceMonolith/bin/Release/net9.0/* ./artifacts/binaries/net9.0/
+          for tfm in net8.0 net9.0 net10.0; do
+            mkdir -p "./artifacts/binaries/$tfm"
+            cp -r "MicroserviceMonolith/bin/Release/$tfm/"* "./artifacts/binaries/$tfm/"
+          done
           VERSION=$(grep -oP '(?<=<Version>)[^<]+' MicroserviceMonolith/MicroserviceMonolith.csproj | head -1)
           cd ./artifacts && zip -r "MicroserviceMonolith-v${VERSION}-binaries.zip" binaries
 

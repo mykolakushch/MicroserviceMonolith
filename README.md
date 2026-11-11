@@ -1,6 +1,6 @@
 # MicroserviceMonolith
 
-[![.NET](https://img.shields.io/badge/.NET-8.0%20%7C%209.0-purple.svg)](https://dotnet.microsoft.com/)
+[![.NET](https://img.shields.io/badge/.NET-8.0%20%7C%209.0%20%7C%2010.0-purple.svg)](https://dotnet.microsoft.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/mykolakushch/MicroserviceMonolith/actions/workflows/dotnet.yml/badge.svg)](https://github.com/mykolakushch/MicroserviceMonolith/actions/workflows/dotnet.yml)
 
@@ -230,7 +230,16 @@ The logging middleware writes a one-line failure summary (`Type: message`); the 
 dotnet add package MicroserviceMonolith
 ```
 
-Targets .NET 8, .NET 9 and .NET 10. It depends only on `Microsoft.Extensions.*` abstractions (DI, Logging, Configuration, Hosting).
+### Supported platforms
+
+| | |
+|---|---|
+| **.NET versions** | .NET 8 (LTS), .NET 9 and .NET 10 (`net8.0`, `net9.0`, `net10.0`). Each one is built and tested in CI. |
+| **Operating systems** | Windows, Linux and macOS, on x64 and ARM64. The library is pure managed code with no native parts, so it runs wherever these .NET versions run. |
+| **App types** | ASP.NET Core, Worker Services and other generic-host apps, console apps, containers (Docker/Kubernetes), Azure/AWS functions and app services, desktop and mobile apps (WPF, WinForms, MAUI, Blazor Server) that use `Microsoft.Extensions.DependencyInjection`. NuGet shows the platform-specific variants of these frameworks (for example `net10.0-windows`, `net9.0-android`) as compatible, because they are built on the same base. |
+| **Not supported** | .NET Framework, .NET Standard and .NET 7 or older (end of life), and Native AOT / trimming (handlers are found by reflection). |
+
+It depends only on `Microsoft.Extensions.*` abstractions (DI, Logging, Configuration, Hosting).
 
 ## 1. Register the framework
 
@@ -626,6 +635,7 @@ Behaviour changes since 1.0 that you may notice:
 | 1.9 | `ModuleBoundaryValidator` |
 | 2.0 | **breaking:** the framework `ILogger`, `LogSeverity`, `ConsoleLogger` and `MicrosoftLoggingAdapter` are removed; middleware, `ModuleManager`, `ExecutionQueue` and `OutboxProcessor` take `Microsoft.Extensions.Logging.ILogger`; the logger is no longer registered in the container and without `AddLogging()` nothing is logged. The obsolete `Core.UserActions` shims are removed (use `MicroserviceMonolith.Adapters.UserActions`) |
 | 2.1 | **breaking:** .NET 10 is supported (net8.0, net9.0, net10.0); the outbox is opt-in (`EnableOutbox` defaults to `false`); the parameterless `IModule.InitializeAsync()`/`ShutdownAsync()` and `ModuleManager.RegisterModulesAsync` are removed (override the `IServiceProvider` overloads); `ModuleManager.ShutdownModulesAsync` requires a service provider; `ExecutionQueue.EnqueueAsync`/`TryEnqueue` follow the same disposed contract as `Enqueue`; queued work items cannot inherit the worker's previous correlation |
+| 2.1.1 | docs and release archive list .NET 10; no code changes |
 
 ## Releasing (maintainers)
 
@@ -634,8 +644,8 @@ Merging to `main` runs CI (build and tests on .NET 8, 9 and 10) but publishes no
 1. Set `<Version>` in `MicroserviceMonolith/MicroserviceMonolith.csproj` (every change that is pushed bumps it) and merge to `main` with green CI.
 2. Tag the merge commit with exactly that version and push the tag:
    ```sh
-   git tag v2.1.0
-   git push origin v2.1.0
+   git tag v2.1.1
+   git push origin v2.1.1
    ```
 3. The `Release and Publish` workflow verifies that the tag equals the csproj version, builds in Release, runs the tests, packs, publishes the package to **NuGet.org** (OIDC trusted publishing, no stored API key) and to GitHub Packages, and then creates the GitHub Release with generated notes and the binaries zip.
 
