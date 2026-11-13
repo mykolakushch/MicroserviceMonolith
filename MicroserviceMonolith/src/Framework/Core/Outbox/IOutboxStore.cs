@@ -26,7 +26,9 @@ namespace MicroserviceMonolith.Core.Outbox
         /// <remarks>
         /// Implementations should not hand the same message to two concurrent processors (for example by leasing
         /// it, or with <c>SELECT ... FOR UPDATE SKIP LOCKED</c>), and should honor retry backoff
-        /// (<see cref="OutboxMessage.NextAttemptOn"/>). The in-memory store does both.
+        /// (<see cref="OutboxMessage.NextAttemptOn"/>). A lease that expires without a reported result should count as a
+        /// failed attempt (increment <see cref="OutboxMessage.RetryCount"/>), otherwise a message that crashes its
+        /// processor is never dead-lettered. The in-memory store does all of this.
         /// </remarks>
         Task<IReadOnlyList<OutboxMessage>> GetPendingMessagesAsync(int batchSize = 50, CancellationToken cancellationToken = default);
 

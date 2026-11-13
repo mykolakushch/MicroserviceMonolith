@@ -14,7 +14,7 @@ namespace MicroserviceMonolith.Core.Outbox
     /// </summary>
     /// <remarks>
     /// <list type="bullet">
-    /// <item><description>Messages handed out by <see cref="GetPendingMessagesAsync"/> are leased for <see cref="LeaseDuration"/>, so concurrent processors do not dispatch the same message twice.</description></item>
+    /// <item><description>Messages handed out by <see cref="GetPendingMessagesAsync"/> are leased for <see cref="LeaseDuration"/>, so concurrent processors do not dispatch the same message twice. A lease that expires without a result counts as a failed attempt (the lease itself is the delay before the next attempt).</description></item>
     /// <item><description>A failed message is retried with exponential backoff (<see cref="RetryBaseDelay"/>, capped by <see cref="RetryMaxDelay"/>).</description></item>
     /// <item><description>A message that reached <see cref="MaxRetries"/> is a dead letter: it is no longer delivered, stays inspectable via <see cref="GetDeadLetters"/> and can be removed with <see cref="PurgeDeadLetters"/>.</description></item>
     /// </list>
@@ -39,7 +39,9 @@ namespace MicroserviceMonolith.Core.Outbox
 
         /// <summary>
         /// How long a message handed out for processing stays leased. If the processor does not report a result
-        /// within this time (for example it crashed), the message becomes available again. Default: 30 seconds.
+        /// within this time (for example it crashed), the attempt counts as failed and the message becomes available
+        /// again, or becomes a dead letter when <see cref="MaxRetries"/> is reached. The lease must be longer than the
+        /// time the processor needs for its whole batch, otherwise a slow message can be delivered twice. Default: 30 seconds.
         /// </summary>
         public TimeSpan LeaseDuration { get; set; } = TimeSpan.FromSeconds(30);
 
@@ -72,6 +74,18 @@ namespace MicroserviceMonolith.Core.Outbox
             lock (_stateLock)
             {
                 var now = _timeProvider.GetUtcNow();
+
+                // A lease that ran out without a result means the previous attempt crashed or hung. It counts as a failed
+                // attempt, so a message that keeps killing its processor still ends up as a dead letter.
+                foreach (var expired in _messages.Values)
+                {
+                    if (!expired.IsProcessed && expired.LockedUntil != null && expired.LockedUntil <= now)
+                    {
+                        expired.RetryCount++;
+                        expired.LastError = "Lease expired before the processor reported a result.";
+                        expired.LockedUntil = null;
+                    }
+                }
 
                 // Exclude processed messages, dead letters, messages waiting for their retry time and leased messages
                 var batch = _messages.Values

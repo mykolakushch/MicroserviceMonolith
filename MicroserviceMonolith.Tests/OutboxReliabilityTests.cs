@@ -64,6 +64,44 @@ namespace MicroserviceMonolith.Tests
         }
 
         [Fact]
+        public async Task ExpiredLease_CountsAsFailedAttempt_AndEndsAsDeadLetter()
+        {
+            var time = new ManualTimeProvider();
+            var store = new InMemoryOutboxStore(time) { MaxRetries = 3, LeaseDuration = TimeSpan.FromSeconds(30) };
+            var poison = NewMessage("poison");
+            await store.SaveAsync(poison);
+
+            // The processor takes the message and never reports a result (crash, hang), three times in a row
+            for (var attempt = 1; attempt <= 3; attempt++)
+            {
+                (await store.GetPendingMessagesAsync()).Should().ContainSingle();
+                time.Advance(TimeSpan.FromSeconds(31));
+            }
+
+            (await store.GetPendingMessagesAsync()).Should().BeEmpty();
+            poison.RetryCount.Should().Be(3);
+            poison.LastError.Should().Contain("Lease expired");
+            store.GetDeadLetters().Should().ContainSingle().Which.Id.Should().Be(poison.Id);
+        }
+
+        [Fact]
+        public async Task ProcessedMessage_IsNotChargedWhenItsLeaseWouldHaveExpired()
+        {
+            var time = new ManualTimeProvider();
+            var store = new InMemoryOutboxStore(time) { MaxRetries = 3, LeaseDuration = TimeSpan.FromSeconds(30) };
+            var message = NewMessage("ok");
+            await store.SaveAsync(message);
+
+            (await store.GetPendingMessagesAsync()).Should().ContainSingle();
+            await store.MarkAsProcessedAsync(message.Id);
+            time.Advance(TimeSpan.FromSeconds(31));
+
+            (await store.GetPendingMessagesAsync()).Should().BeEmpty();
+            message.RetryCount.Should().Be(0);
+            store.GetDeadLetters().Should().BeEmpty();
+        }
+
+        [Fact]
         public async Task MarkAsFailed_RetriesWithExponentialBackoff()
         {
             var time = new ManualTimeProvider();
