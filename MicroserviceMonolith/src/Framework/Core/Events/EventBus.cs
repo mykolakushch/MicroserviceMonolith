@@ -19,7 +19,8 @@ namespace MicroserviceMonolith.Core.Events
     /// <remarks>
     /// <list type="bullet">
     /// <item><description>Dispatch is by the static type <c>TEvent</c> given to <c>PublishAsync</c>: handlers of a base class or interface are not invoked for a derived event.</description></item>
-    /// <item><description>With <see cref="EventPublishStrategy.Parallel"/> every DI-registered handler runs in a DI scope of its own, so concurrent handlers never share scoped services such as a DbContext (handler middlewares are still shared and must be stateless). Handlers registered with <c>Subscribe</c> have no scope.</description></item>
+    /// <item><description>With <see cref="EventPublishStrategy.Parallel"/> every DI-registered handler runs in a DI scope of its own, so concurrent handlers never share scoped services such as a DbContext (handler middlewares are still shared and must be stateless). A retry of a handler by a handler middleware runs in a new scope as well. Handlers registered with <c>Subscribe</c> have no scope.</description></item>
+    /// <item><description>With <see cref="EventPublishStrategy.Sequential"/> the handlers share the scope of the publication (they take part in the publisher's unit of work), so a retry of one handler reuses that scope: a handler that changed tracked entities before failing should clear its change tracker before it is retried.</description></item>
     /// <item><description>With <see cref="EventPublishStrategy.Sequential"/> and <see cref="EventPublishStrategy.Parallel"/> every handler runs even if another fails; one failure is rethrown as is, several as an <see cref="AggregateException"/>.</description></item>
     /// </list>
     /// </remarks>
@@ -332,6 +333,9 @@ namespace MicroserviceMonolith.Core.Events
         /// Adds every DI-registered handler of <typeparamref name="TEvent"/> so that each one runs in its own DI scope.
         /// Handlers are resolved in registration order; the handler at index i is taken from the i-th scope, so
         /// the other instances created in that scope are simply discarded with it.
+        /// Every attempt gets a scope of its own: when a handler middleware (for example
+        /// <see cref="RetryEventMiddleware"/>) runs the same subscriber again, the new attempt resolves a fresh handler
+        /// in a fresh scope, so it never sees a disposed scope or the unsaved state of a failed attempt.
         /// </summary>
         private void AddIsolatedParallelHandlers<TEvent>(List<Func<CancellationToken, Task>> target, TEvent @event)
             where TEvent : class
@@ -355,29 +359,48 @@ namespace MicroserviceMonolith.Core.Events
                 return;
             }
 
-            // The first handler reuses the probe scope and owns it
-            target.Add(ct => RunHandlerInScopeAsync(probe, probeHandlers[0], @event, ct));
+            // The first attempt of the first handler reuses the probe scope and owns it; later attempts create their own
+            IServiceScope? probeScope = probe;
+            var firstHandler = probeHandlers[0];
+            target.Add(async ct =>
+            {
+                var reused = Interlocked.Exchange(ref probeScope, null);
+                if (reused != null)
+                {
+                    await RunHandlerInScopeAsync(reused, firstHandler, @event, ct).ConfigureAwait(false);
+                    return;
+                }
+
+                await RunHandlerInNewScopeAsync(root, 0, @event, ct).ConfigureAwait(false);
+            });
 
             for (var i = 1; i < probeHandlers.Count; i++)
             {
                 var index = i;
-                target.Add(async ct =>
-                {
-                    var scope = root.CreateScope();
-                    IEventHandler<TEvent> handler;
-                    try
-                    {
-                        handler = scope.ServiceProvider.GetServices<IEventHandler<TEvent>>().ElementAt(index);
-                    }
-                    catch
-                    {
-                        await ScopeDisposal.DisposeAsync(scope).ConfigureAwait(false);
-                        throw;
-                    }
-
-                    await RunHandlerInScopeAsync(scope, handler, @event, ct).ConfigureAwait(false);
-                });
+                target.Add(ct => RunHandlerInNewScopeAsync(root, index, @event, ct));
             }
+        }
+
+        private async Task RunHandlerInNewScopeAsync<TEvent>(
+            IServiceProvider root,
+            int index,
+            TEvent @event,
+            CancellationToken cancellationToken)
+            where TEvent : class
+        {
+            var scope = root.CreateScope();
+            IEventHandler<TEvent> handler;
+            try
+            {
+                handler = scope.ServiceProvider.GetServices<IEventHandler<TEvent>>().ElementAt(index);
+            }
+            catch
+            {
+                await ScopeDisposal.DisposeAsync(scope).ConfigureAwait(false);
+                throw;
+            }
+
+            await RunHandlerInScopeAsync(scope, handler, @event, cancellationToken).ConfigureAwait(false);
         }
 
         private async Task RunHandlerInScopeAsync<TEvent>(

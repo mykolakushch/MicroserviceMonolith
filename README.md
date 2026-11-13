@@ -135,12 +135,12 @@ Because a parallel handler lives in its own scope, the framework resolves the ha
 | Strategy | Behaviour |
 |---|---|
 | `Sequential` (default) | handlers run one after another in subscription order; the call completes when all have run |
-| `Parallel` | all handlers are started together and awaited with `Task.WhenAll`; each DI handler has its own scope |
+| `Parallel` | all handlers are started together and awaited with `Task.WhenAll`; each DI handler has its own scope, and every retry of a handler runs in a new scope |
 | `Background` | the publication is enqueued on the `ExecutionQueue` (handlers then run sequentially there) and `PublishAsync` returns immediately. Failures are logged, not thrown to the publisher |
 
 **Failure isolation.** In `Sequential` and `Parallel`, a failing handler never prevents the others from running (a synchronous throw, an exception, or a timeout-style `OperationCanceledException` are all just failures). After every handler has run: one failure is rethrown with its original stack trace, several are thrown together as an `AggregateException`. Only cancellation of the *caller's* token stops a publication.
 
-**Two middleware levels.** `IEventMiddleware` wraps the whole publication; `IEventHandlerMiddleware` wraps each subscriber on its own. Retry belongs on the handler level: when one subscriber fails and is retried, subscribers that already succeeded are not run again.
+**Two middleware levels.** `IEventMiddleware` wraps the whole publication; `IEventHandlerMiddleware` wraps each subscriber on its own. Retry belongs on the handler level: when one subscriber fails and is retried, subscribers that already succeeded are not run again. With `Parallel`, a retried handler is resolved in a fresh scope. With `Sequential`, all handlers share the scope of the publication (they take part in the publisher's unit of work), so a retry reuses it: a handler that changed tracked entities before failing should clear its change tracker (for example `ChangeTracker.Clear()`) before it is retried.
 
 **Subscribers.** `IEventSubscriber.Subscribe` registers a lambda (it returns an `IDisposable` to unsubscribe); a class implementing `IEventHandler<TEvent>` is picked up from DI. Lambdas run in the publication's scope context but have no scope of their own.
 
@@ -171,7 +171,7 @@ flowchart LR
 ```
 
 - **Writer** (`IOutboxWriter`, scoped): creates an `OutboxMessage`, stamps the correlation ids, and saves it through the store. Nothing is written automatically when you call `PublishAsync`; you opt in per event by using the writer.
-- **Store** (`IOutboxStore`): the built-in `InMemoryOutboxStore` is a reference implementation. It leases the messages it hands out (`LeaseDuration`, default 30 s) so concurrent processors do not dispatch the same message twice, retries failures with exponential backoff (`RetryBaseDelay`, `RetryMaxDelay`), and keeps messages that reached `MaxRetries` as dead letters you can inspect (`GetDeadLetters()`) and remove (`PurgeDeadLetters()`).
+- **Store** (`IOutboxStore`): the built-in `InMemoryOutboxStore` is a reference implementation. It leases the messages it hands out (`LeaseDuration`, default 30 s) so concurrent processors do not dispatch the same message twice (the lease must be longer than the time the processor needs for its whole batch), counts a lease that expired without a result as a failed attempt (so a message that crashes its processor still ends up as a dead letter), retries failures with exponential backoff (`RetryBaseDelay`, `RetryMaxDelay`), and keeps messages that reached `MaxRetries` as dead letters you can inspect (`GetDeadLetters()`) and remove (`PurgeDeadLetters()`).
 - **Processor** (`IOutboxProcessor`): resolves the store from a new DI scope for every batch (so a store may be scoped), restores each message's correlation context, publishes, then marks the message processed or failed. Cancellation by the caller does not count as a failure. A background hosted service polls it (`AutoProcessOutbox`).
 - **Delivery is at-least-once.** If publishing succeeds but recording the result fails, or one of several subscribers fails, the message is delivered again. Subscribers must be idempotent.
 - **Message form.** An `OutboxMessage` holds `EventType`, `SchemaVersion`, `Payload` (serialized event), `Headers`, correlation/causation ids, retry state, and, for messages created in this process, the live `Event` object. A durable store persists `EventType` + `SchemaVersion` + `Payload`. `IOutboxEventSerializer` (the built-in `JsonOutboxEventSerializer`) maps a **stable event name** to a CLR type and upgrades older schema versions, so stored messages survive type renames and schema changes. When `Event` is `null` (a message reloaded from the database) the processor recreates it from the payload; a message that cannot be recreated is marked failed instead of crashing the batch.
@@ -522,7 +522,7 @@ What a store must do:
 | Method | Contract |
 |---|---|
 | `SaveAsync` | insert the message **in the caller's transaction** (use the same `DbContext`/connection as your data) |
-| `GetPendingMessagesAsync(batchSize)` | return unprocessed, not dead-lettered messages that are due; **lease them** (for example set `LockedUntil` with an atomic update) so concurrent processors do not take the same rows |
+| `GetPendingMessagesAsync(batchSize)` | return unprocessed, not dead-lettered messages that are due; **lease them** (for example set `LockedUntil` with an atomic update) so concurrent processors do not take the same rows; a lease that expired without a result is a failed attempt: increment the retry count |
 | `MarkAsProcessedAsync` | mark delivered (or delete) |
 | `MarkAsFailedAsync` | increment the retry count, store the error, set `NextAttemptOn` (backoff) |
 | `MaxRetries` | the retry limit; at the limit a message is a dead letter |
@@ -605,7 +605,7 @@ Replace a dependency by registering your fake **before** `AddMicroserviceMonolit
 | `Module 'A' depends on 'B', which is not registered` | register or scan the missing module |
 | My module's `ConfigureServices` never runs | it has no public parameterless constructor, so scanning skips it |
 | `Enqueue` throws `InvalidOperationException` | the bounded `Wait` queue is full; use `EnqueueAsync`/`TryEnqueue` or raise `Capacity` |
-| Outbox message stays pending | it is leased (wait for `LeaseDuration`), waiting for its retry time, or is a dead letter |
+| Outbox message stays pending | it is leased (wait for `LeaseDuration`), waiting for its retry time, or is a dead letter (an expired lease counts as a failed attempt) |
 | Outbox message fails with "no IOutboxEventSerializer" | the store returned a message without an in-memory event and no serializer is registered (or the event type was not `Register`ed) |
 | A command is not retried | by design: add `[IdempotentCommand]` or pass `retryNonIdempotentCommands: true` |
 | Same exception logged twice | you are logging at both the call site and in a middleware, or both `Logging*` and `ErrorHandling*` are not the issue (the logging middleware logs a one-line summary only) |
@@ -641,6 +641,7 @@ Behaviour changes since 1.0 that you may notice:
 | 2.1.1 | docs and release archive list .NET 10; no code changes |
 | 2.1.2 | docs: CI/NuGet/release badges; the GitHub Packages publish step reports failures instead of hiding them |
 | 2.1.3 | the GitHub Packages publish step authenticates with a credentialed NuGet source |
+| 2.1.4 | `Parallel`: a retried handler runs in a fresh DI scope (the first handler used to be retried in its already disposed scope); `InMemoryOutboxStore`: a lease that expires without a result counts as a failed attempt, so a message that crashes or hangs its processor is dead-lettered after `MaxRetries` instead of being redelivered forever |
 
 ## Releasing (maintainers)
 
@@ -649,8 +650,8 @@ Merging to `main` runs CI (build and tests on .NET 8, 9 and 10) but publishes no
 1. Set `<Version>` in `MicroserviceMonolith/MicroserviceMonolith.csproj` (every change that is pushed bumps it) and merge to `main` with green CI.
 2. Tag the merge commit with exactly that version and push the tag:
    ```sh
-   git tag v2.1.3
-   git push origin v2.1.3
+   git tag v2.1.4
+   git push origin v2.1.4
    ```
 3. The `Release and Publish` workflow verifies that the tag equals the csproj version, builds in Release, runs the tests, packs, publishes the package to **NuGet.org** (OIDC trusted publishing, no stored API key) and to GitHub Packages, and then creates the GitHub Release with generated notes and the binaries zip.
 
